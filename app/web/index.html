@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>运维 Agent 控制台</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
+  header { padding: 12px 20px; background: #161a22; display: flex; gap: 16px; align-items: center; border-bottom: 1px solid #262b36; }
+  header input { background: #0f1115; border: 1px solid #333; color: #eee; padding: 6px 10px; border-radius: 6px; }
+  nav { display: flex; gap: 6px; padding: 10px 20px; background: #12151c; }
+  nav button { background: #1b2030; color: #ccc; border: 1px solid #2a3142; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+  nav button.active { background: #2d6cdf; color: #fff; border-color: #2d6cdf; }
+  main { padding: 20px; max-width: 1000px; margin: 0 auto; }
+  .panel { display: none; } .panel.active { display: block; }
+  textarea, input, select { width: 100%; background: #0f1115; border: 1px solid #333; color: #eee; padding: 8px; border-radius: 6px; margin: 4px 0; font-family: inherit; }
+  .btn { background: #2d6cdf; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+  .btn.danger { background: #c0392b; } .btn.ghost { background: #2a3142; }
+  .card { background: #161a22; border: 1px solid #262b36; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  pre { white-space: pre-wrap; background: #0c0e12; padding: 10px; border-radius: 8px; border: 1px solid #222; }
+  .msg { margin: 8px 0; padding: 10px 12px; border-radius: 8px; }
+  .msg.user { background: #1d2740; } .msg.bot { background: #16201a; }
+  .approval { background: #3a2a12; border: 1px solid #6b4f1d; padding: 12px; border-radius: 8px; margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; } td, th { border-bottom: 1px solid #262b36; padding: 6px; text-align: left; font-size: 13px; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+  .readonly { background:#1f3a2a;} .mutating{background:#3a341f;} .dangerous{background:#3a1f1f;}
+  small { color: #888; }
+</style>
+</head>
+<body>
+<header>
+  <strong>🛠️ 运维 Agent 控制台</strong>
+  <input id="token" placeholder="Admin Token" style="width:240px"/>
+  <small>所有请求带 X-Admin-Token</small>
+</header>
+<nav>
+  <button data-tab="chat" class="active">对话</button>
+  <button data-tab="models">模型</button>
+  <button data-tab="servers">服务器</button>
+  <button data-tab="clouds">云账号(MCP)</button>
+  <button data-tab="audits">审计</button>
+</nav>
+<main>
+  <!-- 对话 -->
+  <section class="panel active" id="chat">
+    <div class="card">
+      <div id="messages"></div>
+      <div id="approvalBox"></div>
+      <textarea id="input" rows="3" placeholder="例:检查 web-prod-1 的磁盘使用率,>80% 的分区列出最大的5个目录"></textarea>
+      <button class="btn" onclick="send()">发送</button>
+      <button class="btn ghost" onclick="newThread()">新会话</button>
+      <small id="threadLabel"></small>
+    </div>
+  </section>
+
+  <!-- 模型 -->
+  <section class="panel" id="models">
+    <div class="card">
+      <h3>新增模型供应商</h3>
+      <div class="row">
+        <input id="m_name" placeholder="名称 如 opus"/>
+        <select id="m_type"><option>openai</option><option>anthropic</option><option>qwen</option><option>minimax</option><option>deepseek</option></select>
+        <input id="m_model" placeholder="model 如 claude-opus-4-8 / qwen-max"/>
+        <input id="m_key" placeholder="API Key"/>
+        <input id="m_base" placeholder="base_url(可空,用默认)"/>
+        <label><input type="checkbox" id="m_default" style="width:auto"/> 设为默认</label>
+      </div>
+      <button class="btn" onclick="addModel()">保存</button>
+    </div>
+    <div id="modelList"></div>
+  </section>
+
+  <!-- 服务器 -->
+  <section class="panel" id="servers">
+    <div class="card">
+      <h3>新增服务器</h3>
+      <div class="row">
+        <input id="s_name" placeholder="名称 如 web-prod-1"/>
+        <input id="s_host" placeholder="host/IP"/>
+        <input id="s_port" placeholder="端口 22" value="22"/>
+        <input id="s_user" placeholder="用户名"/>
+        <select id="s_auth"><option value="password">密码</option><option value="key">私钥</option></select>
+        <input id="s_pass" placeholder="密码 或 留空"/>
+      </div>
+      <textarea id="s_key" rows="2" placeholder="私钥(auth=key 时填)"></textarea>
+      <input id="s_tags" placeholder="标签,逗号分隔 如 prod,web"/>
+      <button class="btn" onclick="addServer()">保存</button>
+    </div>
+    <div id="serverList"></div>
+  </section>
+
+  <!-- 云账号 -->
+  <section class="panel" id="clouds">
+    <div class="card">
+      <h3>新增云账号(MCP)</h3>
+      <div class="row">
+        <input id="c_name" placeholder="名称 如 aliyun-prod"/>
+        <select id="c_type"><option>aliyun</option><option>cloudflare</option></select>
+        <select id="c_transport"><option>stdio</option><option>streamable_http</option></select>
+        <input id="c_cmd" placeholder="command(stdio) 如 npx"/>
+        <input id="c_args" placeholder="args 逗号分隔 如 -y,@alicloud/alibabacloud-mcp-server"/>
+        <input id="c_url" placeholder="url(http 方式)"/>
+      </div>
+      <textarea id="c_secrets" rows="3" placeholder='认证信息 JSON,如 {"ALIBABA_CLOUD_ACCESS_KEY_ID":"xxx","ALIBABA_CLOUD_ACCESS_KEY_SECRET":"yyy"}'></textarea>
+      <button class="btn" onclick="addCloud()">保存</button>
+    </div>
+    <div id="cloudList"></div>
+  </section>
+
+  <!-- 审计 -->
+  <section class="panel" id="audits">
+    <div class="card"><button class="btn ghost" onclick="loadAudits()">刷新</button><div id="auditList"></div></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let threadId = null;
+function tok(){ return $('token').value.trim(); }
+async function api(path, method='GET', body){
+  const r = await fetch(path, {method, headers:{'Content-Type':'application/json','X-Admin-Token':tok()}, body: body?JSON.stringify(body):undefined});
+  if(!r.ok){ alert('请求失败 '+r.status+': '+await r.text()); throw new Error(r.status); }
+  return r.json();
+}
+// tabs
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); $(b.dataset.tab).classList.add('active');
+  if(b.dataset.tab==='models') loadModels();
+  if(b.dataset.tab==='servers') loadServers();
+  if(b.dataset.tab==='clouds') loadClouds();
+  if(b.dataset.tab==='audits') loadAudits();
+});
+
+// ---- 对话 ----
+function addMsg(role, text){ const d=document.createElement('div'); d.className='msg '+role; d.innerHTML='<b>'+(role==='user'?'你':'Agent')+'</b><pre>'+text+'</pre>'; $('messages').appendChild(d); window.scrollTo(0,document.body.scrollHeight); }
+function newThread(){ threadId=null; $('messages').innerHTML=''; $('approvalBox').innerHTML=''; $('threadLabel').textContent=''; }
+async function send(){
+  const msg=$('input').value.trim(); if(!msg) return;
+  addMsg('user', msg); $('input').value='';
+  const res=await api('/chat','POST',{message:msg, thread_id:threadId});
+  threadId=res.thread_id; $('threadLabel').textContent='thread: '+threadId;
+  handleResult(res);
+}
+function handleResult(res){
+  if(res.status==='waiting_approval'){
+    const a=res.approval; const box=$('approvalBox');
+    box.innerHTML='<div class="approval"><b>⚠️ 需要审批</b><pre>'+a.operations.join('\n')+'</pre>'+
+      '<button class="btn" onclick="approve(true)">批准执行</button> '+
+      '<button class="btn danger" onclick="approve(false)">拒绝</button></div>';
+  } else { $('approvalBox').innerHTML=''; addMsg('bot', res.reply||'(无内容)'); }
+}
+async function approve(ok){
+  $('approvalBox').innerHTML='处理中...';
+  const res=await api('/chat/approve','POST',{thread_id:threadId, approved:ok, by:'admin'});
+  handleResult(res);
+}
+
+// ---- 模型 ----
+async function addModel(){
+  await api('/admin/models','POST',{name:$('m_name').value, provider_type:$('m_type').value, model_name:$('m_model').value,
+    api_key:$('m_key').value, base_url:$('m_base').value||null, is_default:$('m_default').checked});
+  loadModels();
+}
+async function loadModels(){ const l=await api('/admin/models'); $('modelList').innerHTML=l.map(m=>
+  `<div class="card">${m.is_default?'⭐ ':''}<b>${m.name}</b> · ${m.provider_type} · ${m.model_name} <small>${m.base_url||''}</small>
+   <button class="btn danger" style="float:right" onclick="api('/admin/models/${m.id}','DELETE').then(loadModels)">删除</button></div>`).join(''); }
+
+// ---- 服务器 ----
+async function addServer(){
+  await api('/admin/servers','POST',{name:$('s_name').value, host:$('s_host').value, port:+$('s_port').value,
+    username:$('s_user').value, auth_type:$('s_auth').value, password:$('s_pass').value||null,
+    private_key:$('s_key').value||null, tags:$('s_tags').value.split(',').map(x=>x.trim()).filter(Boolean)});
+  loadServers();
+}
+async function loadServers(){ const l=await api('/admin/servers'); $('serverList').innerHTML=l.map(s=>
+  `<div class="card"><b>${s.name}</b> · ${s.username}@${s.host}:${s.port} · ${s.auth_type} <small>${(s.tags||[]).join(',')}</small>
+   <button class="btn danger" style="float:right" onclick="api('/admin/servers/${s.id}','DELETE').then(loadServers)">删除</button></div>`).join(''); }
+
+// ---- 云账号 ----
+async function addCloud(){
+  let secrets={}; try{ secrets=$('c_secrets').value?JSON.parse($('c_secrets').value):{}; }catch(e){ return alert('secrets 不是合法 JSON'); }
+  await api('/admin/cloud-accounts','POST',{name:$('c_name').value, cloud_type:$('c_type').value, transport:$('c_transport').value,
+    command:$('c_cmd').value||null, args:$('c_args').value.split(',').map(x=>x.trim()).filter(Boolean),
+    url:$('c_url').value||null, secrets});
+  loadClouds();
+}
+async function loadClouds(){ const l=await api('/admin/cloud-accounts'); $('cloudList').innerHTML=l.map(a=>
+  `<div class="card"><b>${a.name}</b> · ${a.cloud_type} · ${a.transport} ${a.enabled?'✅':'⛔'} <small>keys: ${(a.secret_keys||[]).join(', ')}</small>
+   <button class="btn danger" style="float:right" onclick="api('/admin/cloud-accounts/${a.id}','DELETE').then(loadClouds)">删除</button></div>`).join(''); }
+
+// ---- 审计 ----
+async function loadAudits(){ const l=await api('/admin/audits'); $('auditList').innerHTML=
+  '<table><tr><th>时间</th><th>工具</th><th>目标</th><th>命令</th><th>级别</th><th>结果</th></tr>'+
+  l.map(r=>`<tr><td>${r.created_at.slice(5,19)}</td><td>${r.tool}</td><td>${r.target||''}</td>
+   <td>${(r.command||'').slice(0,60)}</td><td><span class="pill ${r.level}">${r.level}</span></td>
+   <td>${r.success?'✅':'❌'}</td></tr>`).join('')+'</table>'; }
+</script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+"""数据模型:服务器、云账号(MCP)、模型供应商、会话、审计日志。
+
+凡是 *_enc 字段都是密文(见 db/crypto.py),通过 Pydantic schema 出入时自动加解密。
+"""
+import datetime as dt
+from enum import Enum
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+class ProviderType(str, Enum):
+    openai = "openai"
+    anthropic = "anthropic"
+    qwen = "qwen"
+    minimax = "minimax"
+    deepseek = "deepseek"
+
+
+class CloudType(str, Enum):
+    aliyun = "aliyun"
+    cloudflare = "cloudflare"
+
+
+class CommandLevel(str, Enum):
+    readonly = "readonly"      # 只读,自动执行
+    mutating = "mutating"      # 变更,执行并记录
+    dangerous = "dangerous"    # 危险,强制人工审批
+
+
+# ----------------------------------------------------------------------------
+# 模型供应商:OpenAI / Anthropic / Qwen / MiniMax / DeepSeek
+# ----------------------------------------------------------------------------
+class ModelProvider(Base):
+    __tablename__ = "model_providers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    provider_type: Mapped[ProviderType] = mapped_column(String(32))
+    model_name: Mapped[str] = mapped_column(String(120))        # 如 gpt-4o / claude-opus-4-8 / qwen-max
+    api_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    base_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    temperature: Mapped[float] = mapped_column(default=0.0)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    extra: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ----------------------------------------------------------------------------
+# 服务器:SSH 凭证
+# ----------------------------------------------------------------------------
+class Server(Base):
+    __tablename__ = "servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    host: Mapped[str] = mapped_column(String(255))
+    port: Mapped[int] = mapped_column(Integer, default=22)
+    username: Mapped[str] = mapped_column(String(100))
+    auth_type: Mapped[str] = mapped_column(String(20), default="password")  # password | key
+    password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    private_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    passphrase_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list] = mapped_column(JSON, default=list)          # 如 ["prod", "web"]
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ----------------------------------------------------------------------------
+# 云账号:以 MCP server 形式接入。阿里云 / Cloudflare,每个云可多账号。
+# transport=stdio 时用 command/args/env;transport=http 时用 url/headers。
+# ----------------------------------------------------------------------------
+class CloudAccount(Base):
+    __tablename__ = "cloud_accounts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)    # 如 aliyun-prod / cf-main
+    cloud_type: Mapped[CloudType] = mapped_column(String(32))
+    transport: Mapped[str] = mapped_column(String(20), default="stdio")  # stdio | streamable_http
+
+    # stdio 方式
+    command: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    args: Mapped[list] = mapped_column(JSON, default=list)
+
+    # http 方式
+    url: Mapped[str | None] = mapped_column(String(400), nullable=True)
+
+    # 认证信息(env 变量值 / headers 值)统一密文存放
+    secrets_enc: Mapped[dict] = mapped_column(JSON, default=dict)   # {"ALIBABA_CLOUD_ACCESS_KEY_ID": "<enc>", ...}
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ----------------------------------------------------------------------------
+# 会话 + 审计
+# ----------------------------------------------------------------------------
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # LangGraph thread
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active")  # active | waiting_approval | done
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    audits: Mapped[list["AuditLog"]] = relationship(back_populates="conversation")
+
+
+class AuditLog(Base):
+    """每一次工具执行(SSH/云操作)都留痕,可回放、可追责。"""
+    __tablename__ = "audit_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int | None] = mapped_column(ForeignKey("conversations.id"), nullable=True)
+    tool_name: Mapped[str] = mapped_column(String(120))
+    target: Mapped[str | None] = mapped_column(String(255), nullable=True)   # 服务器名 / 云账号名
+    command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    level: Mapped[CommandLevel] = mapped_column(String(20), default=CommandLevel.readonly)
+    approved: Mapped[bool | None] = mapped_column(Boolean, nullable=True)    # None=无需审批
+    approved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    conversation: Mapped["Conversation | None"] = relationship(back_populates="audits")
