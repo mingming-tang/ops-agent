@@ -87,6 +87,45 @@ def list_servers(db: Session = _D(get_db)):
             for s in db.query(Server).all()]
 
 
+@router.get("/servers/{server_id}")
+def get_server(server_id: int, db: Session = _D(get_db)):
+    s = db.get(Server, server_id)
+    if s is None:
+        raise HTTPException(404, "服务器不存在")
+    return {"id": s.id, "name": s.name, "host": s.host, "port": s.port,
+            "username": s.username, "auth_type": s.auth_type, "tags": s.tags,
+            "description": s.description,
+            "has_password": bool(s.password_enc), "has_key": bool(s.private_key_enc)}
+
+
+@router.put("/servers/{server_id}")
+def update_server(server_id: int, body: ServerIn, db: Session = _D(get_db)):
+    s = db.get(Server, server_id)
+    if s is None:
+        raise HTTPException(404, "服务器不存在")
+    s.name, s.host, s.port, s.username = body.name, body.host, body.port, body.username
+    s.auth_type, s.tags, s.description = body.auth_type, body.tags, body.description
+    # 密钥类字段:留空表示"保持不变",只有传了新值才覆盖
+    if body.password:
+        s.password_enc = encrypt(body.password)
+    if body.private_key:
+        s.private_key_enc = encrypt(body.private_key)
+    if body.passphrase:
+        s.passphrase_enc = encrypt(body.passphrase)
+    db.commit()
+    return {"id": s.id, "name": s.name}
+
+
+@router.post("/servers/{server_id}/test")
+async def test_server(server_id: int, db: Session = _D(get_db)):
+    from app.tools.ssh import test_server_connection
+
+    s = db.get(Server, server_id)
+    if s is None:
+        raise HTTPException(404, "服务器不存在")
+    return await test_server_connection(s.name)
+
+
 @router.delete("/servers/{server_id}")
 def delete_server(server_id: int, db: Session = _D(get_db)):
     db.query(Server).filter(Server.id == server_id).delete()

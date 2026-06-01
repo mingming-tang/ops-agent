@@ -68,6 +68,12 @@ ssh_run_tool = StructuredTool.from_function(
 )
 
 
+async def test_server_connection(server_name: str, timeout: int = 10) -> dict:
+    """测试到某台服务器的 SSH 连通性,返回 {ok, detail}。"""
+    result = await _run_on_server(server_name, "whoami; hostname; uptime", timeout=timeout)
+    return {"ok": not result.startswith("[错误]"), "detail": result}
+
+
 def list_servers() -> str:
     """列出后台已登记的所有服务器(名称、地址、标签),供 Agent 选目标。"""
     with SessionLocal() as db:

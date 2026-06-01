@@ -5,28 +5,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>运维 Agent 控制台</title>
 <style>
+  /* ===== light(默认)===== */
+  :root {
+    --bg: #f5f6f8; --fg: #1f2329; --header-bg: #ffffff; --nav-bg: #eef0f4;
+    --input-bg: #ffffff; --border: #d7dbe2; --card-bg: #ffffff; --card-border: #e3e6ec;
+    --nav-btn-bg: #e6e9ef; --nav-btn-fg: #41454c; --nav-btn-border: #d7dbe2;
+    --pre-bg: #f0f2f5; --pre-border: #e0e3e9; --muted: #8a909a;
+    --primary: #2d6cdf; --danger: #c0392b; --ghost: #e6e9ef; --ghost-fg: #41454c;
+    --msg-user: #dfe9ff; --msg-bot: #e3f5e8; --approval-bg: #fff5e0; --approval-border: #e6c772;
+    --readonly: #d8f0e0; --mutating: #f3eccf; --dangerous: #f6dada;
+    --pill-fg: #2a2f36;
+  }
+  /* ===== dark ===== */
+  [data-theme="dark"] {
+    --bg: #0f1115; --fg: #e6e6e6; --header-bg: #161a22; --nav-bg: #12151c;
+    --input-bg: #0f1115; --border: #333; --card-bg: #161a22; --card-border: #262b36;
+    --nav-btn-bg: #1b2030; --nav-btn-fg: #ccc; --nav-btn-border: #2a3142;
+    --pre-bg: #0c0e12; --pre-border: #222; --muted: #888;
+    --primary: #2d6cdf; --danger: #c0392b; --ghost: #2a3142; --ghost-fg: #e6e6e6;
+    --msg-user: #1d2740; --msg-bot: #16201a; --approval-bg: #3a2a12; --approval-border: #6b4f1d;
+    --readonly: #1f3a2a; --mutating: #3a341f; --dangerous: #3a1f1f;
+    --pill-fg: #e6e6e6;
+  }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: #0f1115; color: #e6e6e6; }
-  header { padding: 12px 20px; background: #161a22; display: flex; gap: 16px; align-items: center; border-bottom: 1px solid #262b36; }
-  header input { background: #0f1115; border: 1px solid #333; color: #eee; padding: 6px 10px; border-radius: 6px; }
-  nav { display: flex; gap: 6px; padding: 10px 20px; background: #12151c; }
-  nav button { background: #1b2030; color: #ccc; border: 1px solid #2a3142; padding: 6px 14px; border-radius: 6px; cursor: pointer; }
-  nav button.active { background: #2d6cdf; color: #fff; border-color: #2d6cdf; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: var(--bg); color: var(--fg); }
+  header { padding: 12px 20px; background: var(--header-bg); display: flex; gap: 16px; align-items: center; border-bottom: 1px solid var(--card-border); }
+  header input { background: var(--input-bg); border: 1px solid var(--border); color: var(--fg); padding: 6px 10px; border-radius: 6px; }
+  nav { display: flex; gap: 6px; padding: 10px 20px; background: var(--nav-bg); }
+  nav button { background: var(--nav-btn-bg); color: var(--nav-btn-fg); border: 1px solid var(--nav-btn-border); padding: 6px 14px; border-radius: 6px; cursor: pointer; }
+  nav button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
   main { padding: 20px; max-width: 1000px; margin: 0 auto; }
   .panel { display: none; } .panel.active { display: block; }
-  textarea, input, select { width: 100%; background: #0f1115; border: 1px solid #333; color: #eee; padding: 8px; border-radius: 6px; margin: 4px 0; font-family: inherit; }
-  .btn { background: #2d6cdf; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
-  .btn.danger { background: #c0392b; } .btn.ghost { background: #2a3142; }
-  .card { background: #161a22; border: 1px solid #262b36; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  textarea, input, select { width: 100%; background: var(--input-bg); border: 1px solid var(--border); color: var(--fg); padding: 8px; border-radius: 6px; margin: 4px 0; font-family: inherit; }
+  .btn { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+  .btn.danger { background: var(--danger); } .btn.ghost { background: var(--ghost); color: var(--ghost-fg); }
+  .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  pre { white-space: pre-wrap; background: #0c0e12; padding: 10px; border-radius: 8px; border: 1px solid #222; }
+  pre { white-space: pre-wrap; background: var(--pre-bg); padding: 10px; border-radius: 8px; border: 1px solid var(--pre-border); }
   .msg { margin: 8px 0; padding: 10px 12px; border-radius: 8px; }
-  .msg.user { background: #1d2740; } .msg.bot { background: #16201a; }
-  .approval { background: #3a2a12; border: 1px solid #6b4f1d; padding: 12px; border-radius: 8px; margin: 10px 0; }
-  table { width: 100%; border-collapse: collapse; } td, th { border-bottom: 1px solid #262b36; padding: 6px; text-align: left; font-size: 13px; }
-  .pill { padding: 2px 8px; border-radius: 10px; font-size: 12px; }
-  .readonly { background:#1f3a2a;} .mutating{background:#3a341f;} .dangerous{background:#3a1f1f;}
-  small { color: #888; }
+  .msg.user { background: var(--msg-user); } .msg.bot { background: var(--msg-bot); }
+  .approval { background: var(--approval-bg); border: 1px solid var(--approval-border); padding: 12px; border-radius: 8px; margin: 10px 0; }
+  table { width: 100%; border-collapse: collapse; } td, th { border-bottom: 1px solid var(--card-border); padding: 6px; text-align: left; font-size: 13px; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 12px; color: var(--pill-fg); }
+  .readonly { background: var(--readonly);} .mutating{background: var(--mutating);} .dangerous{background: var(--dangerous);}
+  small { color: var(--muted); }
+  #themeToggle { margin-left: auto; }
 </style>
 </head>
 <body>
@@ -34,6 +57,7 @@
   <strong>🛠️ 运维 Agent 控制台</strong>
   <input id="token" placeholder="Admin Token" style="width:240px"/>
   <small>所有请求带 X-Admin-Token</small>
+  <button id="themeToggle" class="btn ghost" onclick="toggleTheme()">🌙 深色</button>
 </header>
 <nav>
   <button data-tab="chat" class="active">对话</button>
@@ -48,8 +72,8 @@
     <div class="card">
       <div id="messages"></div>
       <div id="approvalBox"></div>
-      <textarea id="input" rows="3" placeholder="例:检查 web-prod-1 的磁盘使用率,>80% 的分区列出最大的5个目录"></textarea>
-      <button class="btn" onclick="send()">发送</button>
+      <textarea id="input" rows="3" placeholder="例:检查 web-prod-1 的磁盘使用率,>80% 的分区列出最大的5个目录(⌘/Ctrl+Enter 发送)"></textarea>
+      <button class="btn" onclick="send()">发送 (⌘↵)</button>
       <button class="btn ghost" onclick="newThread()">新会话</button>
       <small id="threadLabel"></small>
     </div>
@@ -75,18 +99,21 @@
   <!-- 服务器 -->
   <section class="panel" id="servers">
     <div class="card">
-      <h3>新增服务器</h3>
+      <h3 id="s_formTitle">新增服务器</h3>
       <div class="row">
         <input id="s_name" placeholder="名称 如 web-prod-1"/>
         <input id="s_host" placeholder="host/IP"/>
         <input id="s_port" placeholder="端口 22" value="22"/>
         <input id="s_user" placeholder="用户名"/>
         <select id="s_auth"><option value="password">密码</option><option value="key">私钥</option></select>
-        <input id="s_pass" placeholder="密码 或 留空"/>
+        <input id="s_pass" placeholder="密码"/>
       </div>
       <textarea id="s_key" rows="2" placeholder="私钥(auth=key 时填)"></textarea>
       <input id="s_tags" placeholder="标签,逗号分隔 如 prod,web"/>
-      <button class="btn" onclick="addServer()">保存</button>
+      <input id="s_desc" placeholder="描述(可选)"/>
+      <button class="btn" id="s_saveBtn" onclick="saveServer()">保存</button>
+      <button class="btn ghost" id="s_cancelBtn" onclick="resetServerForm()" style="display:none">取消编辑</button>
+      <small id="s_editHint" style="display:none"> · 编辑中,密码/私钥留空表示保持不变</small>
     </div>
     <div id="serverList"></div>
   </section>
@@ -117,6 +144,19 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
+// ---- 主题(默认 light,记忆到 localStorage)----
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  const btn=$('themeToggle'); if(btn) btn.textContent = t==='dark' ? '☀️ 浅色' : '🌙 深色';
+}
+function toggleTheme(){
+  const cur=document.documentElement.getAttribute('data-theme')||'light';
+  const next = cur==='dark' ? 'light' : 'dark';
+  localStorage.setItem('theme', next); applyTheme(next);
+}
+applyTheme(localStorage.getItem('theme') || 'light');
+
 let threadId = null;
 function tok(){ return $('token').value.trim(); }
 async function api(path, method='GET', body){
@@ -158,6 +198,10 @@ async function approve(ok){
   const res=await api('/chat/approve','POST',{thread_id:threadId, approved:ok, by:'admin'});
   handleResult(res);
 }
+// 快捷键:⌘/Ctrl + Enter 发送
+$('input').addEventListener('keydown', e=>{
+  if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); send(); }
+});
 
 // ---- 模型 ----
 async function addModel(){
@@ -170,15 +214,55 @@ async function loadModels(){ const l=await api('/admin/models'); $('modelList').
    <button class="btn danger" style="float:right" onclick="api('/admin/models/${m.id}','DELETE').then(loadModels)">删除</button></div>`).join(''); }
 
 // ---- 服务器 ----
-async function addServer(){
-  await api('/admin/servers','POST',{name:$('s_name').value, host:$('s_host').value, port:+$('s_port').value,
+let editingServerId = null;
+function serverPayload(){
+  return {name:$('s_name').value, host:$('s_host').value, port:+$('s_port').value||22,
     username:$('s_user').value, auth_type:$('s_auth').value, password:$('s_pass').value||null,
-    private_key:$('s_key').value||null, tags:$('s_tags').value.split(',').map(x=>x.trim()).filter(Boolean)});
-  loadServers();
+    private_key:$('s_key').value||null, description:$('s_desc').value||null,
+    tags:$('s_tags').value.split(',').map(x=>x.trim()).filter(Boolean)};
+}
+async function saveServer(){
+  const p=serverPayload();
+  if(!p.name||!p.host||!p.username) return alert('名称/host/用户名 必填');
+  if(editingServerId) await api('/admin/servers/'+editingServerId,'PUT',p);
+  else await api('/admin/servers','POST',p);
+  resetServerForm(); loadServers();
+}
+function resetServerForm(){
+  editingServerId=null;
+  ['s_name','s_host','s_user','s_pass','s_key','s_tags','s_desc'].forEach(id=>$(id).value='');
+  $('s_port').value='22'; $('s_auth').value='password';
+  $('s_pass').placeholder='密码'; $('s_key').placeholder='私钥(auth=key 时填)';
+  $('s_formTitle').textContent='新增服务器'; $('s_saveBtn').textContent='保存';
+  $('s_cancelBtn').style.display='none'; $('s_editHint').style.display='none';
+}
+async function editServer(id){
+  const s=await api('/admin/servers/'+id);
+  editingServerId=id;
+  $('s_name').value=s.name; $('s_host').value=s.host; $('s_port').value=s.port;
+  $('s_user').value=s.username; $('s_auth').value=s.auth_type;
+  $('s_tags').value=(s.tags||[]).join(','); $('s_desc').value=s.description||'';
+  $('s_pass').value=''; $('s_key').value='';
+  $('s_pass').placeholder = s.has_password ? '密码(留空保持不变)' : '密码';
+  $('s_key').placeholder  = s.has_key ? '私钥(留空保持不变)' : '私钥(auth=key 时填)';
+  $('s_formTitle').textContent='编辑服务器 #'+id; $('s_saveBtn').textContent='更新';
+  $('s_cancelBtn').style.display='inline-block'; $('s_editHint').style.display='inline';
+  window.scrollTo(0,0);
+}
+async function testServer(id){
+  const slot=$('test_'+id); slot.innerHTML=' <small>测试中…</small>';
+  try{ const r=await api('/admin/servers/'+id+'/test','POST');
+    slot.innerHTML=(r.ok?'✅ 连通':'❌ 失败')+'<pre>'+r.detail+'</pre>'; }
+  catch(e){ slot.innerHTML=' <small>❌ 请求失败</small>'; }
 }
 async function loadServers(){ const l=await api('/admin/servers'); $('serverList').innerHTML=l.map(s=>
   `<div class="card"><b>${s.name}</b> · ${s.username}@${s.host}:${s.port} · ${s.auth_type} <small>${(s.tags||[]).join(',')}</small>
-   <button class="btn danger" style="float:right" onclick="api('/admin/servers/${s.id}','DELETE').then(loadServers)">删除</button></div>`).join(''); }
+   <span style="float:right">
+     <button class="btn ghost" onclick="testServer(${s.id})">测试连接</button>
+     <button class="btn ghost" onclick="editServer(${s.id})">编辑</button>
+     <button class="btn danger" onclick="if(confirm('删除 ${s.name}?'))api('/admin/servers/${s.id}','DELETE').then(loadServers)">删除</button>
+   </span>
+   <div id="test_${s.id}"></div></div>`).join(''); }
 
 // ---- 云账号 ----
 async function addCloud(){
