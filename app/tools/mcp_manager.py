@@ -29,15 +29,27 @@ def _account_to_server_config(acc: CloudAccount) -> dict:
 
 
 async def test_cloud_account(acc: CloudAccount) -> dict:
-    """测试单个云账号 MCP 是否可连、能拉到工具。返回 {ok, tool_count, tools/error}。"""
+    """测试单个云账号 MCP 是否可连、能拉到工具。
+
+    成功:{ok:True, tool_count, tools}
+    失败:{ok:False, error: "类型: 消息", traceback: 完整堆栈};同时把完整堆栈
+          写入服务端日志(/tmp/operator_agent.log)。stdio 子进程自身的 stderr 也会
+          直接打到该日志,是排查"命令能跑但 MCP 起不来"类问题的关键。
+    """
+    import logging
+    import traceback
+
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
+    logger = logging.getLogger("operator_agent.mcp")
     try:
         client = MultiServerMCPClient({acc.name: _account_to_server_config(acc)})
         tools = await client.get_tools(server_name=acc.name)
         return {"ok": True, "tool_count": len(tools), "tools": [t.name for t in tools[:20]]}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)}
+        tb = traceback.format_exc()
+        logger.error("测试云账号 '%s' 失败:\n%s", acc.name, tb)
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "traceback": tb}
 
 
 async def load_cloud_tools(accounts: list[CloudAccount]) -> list[BaseTool]:

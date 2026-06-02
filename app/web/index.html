@@ -147,6 +147,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
+const esc = s => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 // ---- 主题(默认 light,记忆到 localStorage)----
 function applyTheme(t){
@@ -308,8 +309,10 @@ async function testCloud(id){
   const slot=$('ctest_'+id); slot.innerHTML=' <small>连接中…(stdio 首次会拉起 MCP 进程,可能较慢)</small>';
   try{ const r=await api('/admin/cloud-accounts/'+id+'/test','POST');
     slot.innerHTML = r.ok
-      ? '✅ 可用,拉到 '+r.tool_count+' 个工具<pre>'+(r.tools||[]).join('\n')+'</pre>'
-      : '❌ 不可用<pre>'+r.error+'</pre>'; }
+      ? '✅ 可用,拉到 '+r.tool_count+' 个工具<pre>'+esc((r.tools||[]).join('\n'))+'</pre>'
+      : '❌ 不可用<pre>'+esc(r.error)+'</pre>'
+        +(r.traceback?'<details><summary>展开完整堆栈</summary><pre>'+esc(r.traceback)+'</pre></details>':'')
+        +'<small>更多细节(含 MCP 子进程 stderr)见服务端日志 /tmp/operator_agent.log</small>'; }
   catch(e){ slot.innerHTML=' <small>❌ 请求失败</small>'; }
 }
 async function loadClouds(){ const l=await api('/admin/cloud-accounts'); $('cloudList').innerHTML=l.map(a=>
