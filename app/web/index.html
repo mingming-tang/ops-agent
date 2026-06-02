@@ -121,7 +121,7 @@
   <!-- 云账号 -->
   <section class="panel" id="clouds">
     <div class="card">
-      <h3>新增云账号(MCP)</h3>
+      <h3 id="c_formTitle">新增云账号(MCP)</h3>
       <div class="row">
         <input id="c_name" placeholder="名称 如 aliyun-prod"/>
         <select id="c_type"><option>aliyun</option><option>cloudflare</option></select>
@@ -130,8 +130,11 @@
         <input id="c_args" placeholder="args 逗号分隔 如 -y,@alicloud/alibabacloud-mcp-server"/>
         <input id="c_url" placeholder="url(http 方式)"/>
       </div>
+      <label><input type="checkbox" id="c_enabled" style="width:auto" checked/> 启用</label>
       <textarea id="c_secrets" rows="3" placeholder='认证信息 JSON,如 {"ALIBABA_CLOUD_ACCESS_KEY_ID":"xxx","ALIBABA_CLOUD_ACCESS_KEY_SECRET":"yyy"}'></textarea>
-      <button class="btn" onclick="addCloud()">保存</button>
+      <button class="btn" id="c_saveBtn" onclick="saveCloud()">保存</button>
+      <button class="btn ghost" id="c_cancelBtn" onclick="resetCloudForm()" style="display:none">取消编辑</button>
+      <small id="c_editHint" style="display:none"> · 编辑中,认证 JSON 留空表示保持不变</small>
     </div>
     <div id="cloudList"></div>
   </section>
@@ -161,7 +164,7 @@ let threadId = null;
 function tok(){ return $('token').value.trim(); }
 async function api(path, method='GET', body){
   const r = await fetch(path, {method, headers:{'Content-Type':'application/json','X-Admin-Token':tok()}, body: body?JSON.stringify(body):undefined});
-  if(!r.ok){ alert('请求失败 '+r.status+': '+await r.text()); throw new Error(r.status); }
+  if(!r.ok){ let m=await r.text(); try{ m=JSON.parse(m).detail||m; }catch(e){} alert('请求失败 '+r.status+': '+m); throw new Error(r.status); }
   return r.json();
 }
 // tabs
@@ -265,16 +268,58 @@ async function loadServers(){ const l=await api('/admin/servers'); $('serverList
    <div id="test_${s.id}"></div></div>`).join(''); }
 
 // ---- 云账号 ----
-async function addCloud(){
-  let secrets={}; try{ secrets=$('c_secrets').value?JSON.parse($('c_secrets').value):{}; }catch(e){ return alert('secrets 不是合法 JSON'); }
-  await api('/admin/cloud-accounts','POST',{name:$('c_name').value, cloud_type:$('c_type').value, transport:$('c_transport').value,
+let editingCloudId = null;
+function cloudPayload(){
+  let secrets={}; try{ secrets=$('c_secrets').value?JSON.parse($('c_secrets').value):{}; }
+  catch(e){ alert('认证 JSON 格式不合法'); throw e; }
+  return {name:$('c_name').value, cloud_type:$('c_type').value, transport:$('c_transport').value,
     command:$('c_cmd').value||null, args:$('c_args').value.split(',').map(x=>x.trim()).filter(Boolean),
-    url:$('c_url').value||null, secrets});
-  loadClouds();
+    url:$('c_url').value||null, enabled:$('c_enabled').checked, secrets};
+}
+async function saveCloud(){
+  let p; try{ p=cloudPayload(); }catch(e){ return; }
+  if(!p.name) return alert('名称必填');
+  if(editingCloudId) await api('/admin/cloud-accounts/'+editingCloudId,'PUT',p);
+  else await api('/admin/cloud-accounts','POST',p);
+  resetCloudForm(); loadClouds();
+}
+function resetCloudForm(){
+  editingCloudId=null;
+  ['c_name','c_cmd','c_args','c_url','c_secrets'].forEach(id=>$(id).value='');
+  $('c_type').value='aliyun'; $('c_transport').value='stdio'; $('c_enabled').checked=true;
+  $('c_secrets').placeholder='认证信息 JSON,如 {"ALIBABA_CLOUD_ACCESS_KEY_ID":"xxx","ALIBABA_CLOUD_ACCESS_KEY_SECRET":"yyy"}';
+  $('c_formTitle').textContent='新增云账号(MCP)'; $('c_saveBtn').textContent='保存';
+  $('c_cancelBtn').style.display='none'; $('c_editHint').style.display='none';
+}
+async function editCloud(id){
+  const a=await api('/admin/cloud-accounts/'+id);
+  editingCloudId=id;
+  $('c_name').value=a.name; $('c_type').value=a.cloud_type; $('c_transport').value=a.transport;
+  $('c_cmd').value=a.command||''; $('c_args').value=(a.args||[]).join(','); $('c_url').value=a.url||'';
+  $('c_enabled').checked=!!a.enabled; $('c_secrets').value='';
+  $('c_secrets').placeholder = (a.secret_keys||[]).length
+    ? '已有认证:'+a.secret_keys.join(', ')+'(留空保持不变,填新 JSON 则整体替换)'
+    : '认证信息 JSON';
+  $('c_formTitle').textContent='编辑云账号 #'+id; $('c_saveBtn').textContent='更新';
+  $('c_cancelBtn').style.display='inline-block'; $('c_editHint').style.display='inline';
+  window.scrollTo(0,0);
+}
+async function testCloud(id){
+  const slot=$('ctest_'+id); slot.innerHTML=' <small>连接中…(stdio 首次会拉起 MCP 进程,可能较慢)</small>';
+  try{ const r=await api('/admin/cloud-accounts/'+id+'/test','POST');
+    slot.innerHTML = r.ok
+      ? '✅ 可用,拉到 '+r.tool_count+' 个工具<pre>'+(r.tools||[]).join('\n')+'</pre>'
+      : '❌ 不可用<pre>'+r.error+'</pre>'; }
+  catch(e){ slot.innerHTML=' <small>❌ 请求失败</small>'; }
 }
 async function loadClouds(){ const l=await api('/admin/cloud-accounts'); $('cloudList').innerHTML=l.map(a=>
   `<div class="card"><b>${a.name}</b> · ${a.cloud_type} · ${a.transport} ${a.enabled?'✅':'⛔'} <small>keys: ${(a.secret_keys||[]).join(', ')}</small>
-   <button class="btn danger" style="float:right" onclick="api('/admin/cloud-accounts/${a.id}','DELETE').then(loadClouds)">删除</button></div>`).join(''); }
+   <span style="float:right">
+     <button class="btn ghost" onclick="testCloud(${a.id})">测试可用性</button>
+     <button class="btn ghost" onclick="editCloud(${a.id})">编辑</button>
+     <button class="btn danger" onclick="if(confirm('删除 ${a.name}?'))api('/admin/cloud-accounts/${a.id}','DELETE').then(loadClouds)">删除</button>
+   </span>
+   <div id="ctest_${a.id}"></div></div>`).join(''); }
 
 // ---- 审计 ----
 async function loadAudits(){ const l=await api('/admin/audits'); $('auditList').innerHTML=

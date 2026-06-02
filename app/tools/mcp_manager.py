@@ -28,6 +28,18 @@ def _account_to_server_config(acc: CloudAccount) -> dict:
     }
 
 
+async def test_cloud_account(acc: CloudAccount) -> dict:
+    """测试单个云账号 MCP 是否可连、能拉到工具。返回 {ok, tool_count, tools/error}。"""
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    try:
+        client = MultiServerMCPClient({acc.name: _account_to_server_config(acc)})
+        tools = await client.get_tools(server_name=acc.name)
+        return {"ok": True, "tool_count": len(tools), "tools": [t.name for t in tools[:20]]}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": str(e)}
+
+
 async def load_cloud_tools(accounts: list[CloudAccount]) -> list[BaseTool]:
     """根据传入的云账号列表,返回它们暴露的所有 MCP 工具(带账号前缀)。"""
     from langchain_mcp_adapters.client import MultiServerMCPClient

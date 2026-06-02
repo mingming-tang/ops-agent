@@ -16,6 +16,17 @@ from fastapi import Depends as _D
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
 
+def _commit(db: Session) -> None:
+    """提交;把唯一约束冲突(重名)转成友好的 409,而不是 500。"""
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "名称已存在,请换一个唯一名称") from None
+
+
 # ---------- 模型供应商 ----------
 class ModelIn(BaseModel):
     name: str
@@ -37,7 +48,7 @@ def create_model(body: ModelIn, db: Session = _D(get_db)):
         api_key_enc=encrypt(body.api_key), base_url=body.base_url,
         temperature=body.temperature, is_default=body.is_default, extra=body.extra,
     )
-    db.add(m); db.commit()
+    db.add(m); _commit(db)
     return {"id": m.id, "name": m.name}
 
 
@@ -76,7 +87,7 @@ def create_server(body: ServerIn, db: Session = _D(get_db)):
         private_key_enc=encrypt(body.private_key), passphrase_enc=encrypt(body.passphrase),
         tags=body.tags, description=body.description,
     )
-    db.add(s); db.commit()
+    db.add(s); _commit(db)
     return {"id": s.id, "name": s.name}
 
 
@@ -112,7 +123,7 @@ def update_server(server_id: int, body: ServerIn, db: Session = _D(get_db)):
         s.private_key_enc = encrypt(body.private_key)
     if body.passphrase:
         s.passphrase_enc = encrypt(body.passphrase)
-    db.commit()
+    _commit(db)
     return {"id": s.id, "name": s.name}
 
 
@@ -152,7 +163,7 @@ def create_cloud(body: CloudIn, db: Session = _D(get_db)):
         secrets_enc={k: encrypt(v) for k, v in body.secrets.items()},
         enabled=body.enabled,
     )
-    db.add(acc); db.commit()
+    db.add(acc); _commit(db)
     return {"id": acc.id, "name": acc.name}
 
 
@@ -162,6 +173,41 @@ def list_cloud(db: Session = _D(get_db)):
              "transport": a.transport, "enabled": a.enabled,
              "secret_keys": list((a.secrets_enc or {}).keys())}
             for a in db.query(CloudAccount).all()]
+
+
+@router.get("/cloud-accounts/{acc_id}")
+def get_cloud(acc_id: int, db: Session = _D(get_db)):
+    a = db.get(CloudAccount, acc_id)
+    if a is None:
+        raise HTTPException(404, "云账号不存在")
+    return {"id": a.id, "name": a.name, "cloud_type": a.cloud_type, "transport": a.transport,
+            "command": a.command, "args": a.args, "url": a.url, "enabled": a.enabled,
+            "secret_keys": list((a.secrets_enc or {}).keys())}  # 不回传密钥明文
+
+
+@router.put("/cloud-accounts/{acc_id}")
+def update_cloud(acc_id: int, body: CloudIn, db: Session = _D(get_db)):
+    a = db.get(CloudAccount, acc_id)
+    if a is None:
+        raise HTTPException(404, "云账号不存在")
+    a.name, a.cloud_type, a.transport = body.name, body.cloud_type, body.transport
+    a.command, a.args, a.url, a.enabled = body.command, body.args, body.url, body.enabled
+    # secrets 留空表示"保持不变";传了则整体覆盖并加密
+    if body.secrets:
+        a.secrets_enc = {k: encrypt(v) for k, v in body.secrets.items()}
+    _commit(db)
+    return {"id": a.id, "name": a.name}
+
+
+@router.post("/cloud-accounts/{acc_id}/test")
+async def test_cloud(acc_id: int, db: Session = _D(get_db)):
+    from app.tools.mcp_manager import test_cloud_account
+
+    a = db.get(CloudAccount, acc_id)
+    if a is None:
+        raise HTTPException(404, "云账号不存在")
+    db.expunge(a)
+    return await test_cloud_account(a)
 
 
 @router.delete("/cloud-accounts/{acc_id}")
