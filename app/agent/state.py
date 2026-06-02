@@ -14,3 +14,4 @@ class AgentState(TypedDict):
     current_step: int          # 当前执行到第几步
     dry_run: bool              # 是否只演练不真改
     notes: str                 # 反思/上下文摘要(context engineering)
+    approved_ids: list[str]    # 本轮用户批准执行的 tool_call id

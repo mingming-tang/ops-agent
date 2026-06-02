@@ -112,6 +112,18 @@ class Conversation(Base):
     audits: Mapped[list["AuditLog"]] = relationship(back_populates="conversation")
 
 
+class Message(Base):
+    """对话消息(用于历史记录查看)。role: user | assistant | tool。"""
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int | None] = mapped_column(ForeignKey("conversations.id"), nullable=True)
+    role: Mapped[str] = mapped_column(String(20))
+    content: Mapped[str] = mapped_column(Text, default="")
+    tool_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AuditLog(Base):
     """每一次工具执行(SSH/云操作)都留痕,可回放、可追责。"""
     __tablename__ = "audit_logs"

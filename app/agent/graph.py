@@ -18,7 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from app.agent.guardrails import classify_tool_call
+from app.agent.guardrails import classify_tool_call, needs_approval
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.config import get_settings
@@ -40,64 +40,63 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None):
         response = await model_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
-    # -- 节点:护栏 + 人工审批 --
+    # -- 节点:护栏 + 逐条审批 --
     def guardrail_node(state: AgentState) -> dict:
         last: AIMessage = state["messages"][-1]
-        dangerous = []
+        pending = []          # 需用户确认的可执行命令
+        auto_ids = []         # 无需确认的(如 list_servers)直接放行
         for tc in last.tool_calls:
-            level, summary = classify_tool_call(tc["name"], tc["args"])
-            if level == CommandLevel.dangerous and settings.require_approval_for_dangerous:
-                dangerous.append(summary)
+            if needs_approval(tc["name"]):
+                level, summary = classify_tool_call(tc["name"], tc["args"])
+                pending.append({"id": tc["id"], "name": tc["name"], "level": level.value,
+                                "summary": summary, "command": tc["args"].get("command"),
+                                "args": tc["args"]})
+            else:
+                auto_ids.append(tc["id"])
 
-        if not dangerous:
-            return {}  # 全部放行,路由到 execute_tools
+        if not pending or not settings.require_command_approval:
+            return {"approved_ids": [tc["id"] for tc in last.tool_calls]}
 
-        # 挂起等待人工审批。前端通过 resume 传回 {"approved": bool, "by": "用户名"}
-        decision = interrupt({
-            "type": "approval_required",
-            "operations": dangerous,
-            "message": "以下高危操作需要人工审批,批准请回传 approved=true。",
-        })
-        if decision and decision.get("approved"):
-            return {"notes": f"高危操作已被 {decision.get('by', '人工')} 批准"}
+        # 挂起等待用户确认。resume 传回 {"action": "all|selected|reject", "ids": [...]}
+        decision = interrupt({"type": "approval_required", "operations": pending,
+                              "message": "以下命令需要确认后才会执行"}) or {}
+        action = decision.get("action", "reject")
+        if action == "all":
+            approved = [op["id"] for op in pending]
+        elif action == "selected":
+            approved = [i for i in decision.get("ids", []) if i in {op["id"] for op in pending}]
+        else:  # reject
+            approved = []
+        return {"approved_ids": auto_ids + approved}
 
-        # 被拒绝:为所有待执行 tool_call 生成拒绝回执,保证消息配对合法,再回到 agent
-        rejections = [
-            ToolMessage(content="[已拒绝] 用户未批准该操作,请改用更安全的方案。",
-                        tool_call_id=tc["id"])
-            for tc in last.tool_calls
-        ]
-        return {"messages": rejections, "notes": "上一步高危操作被拒绝"}
-
-    # -- 节点:执行工具 + 审计 --
+    # -- 节点:执行工具 + 审计(只执行已批准的,其余跳过)--
     async def execute_tools_node(state: AgentState) -> dict:
         last: AIMessage = state["messages"][-1]
+        approved = set(state.get("approved_ids") or [])
         results = []
         for tc in last.tool_calls:
-            tool = tools_by_name.get(tc["name"])
             level, summary = classify_tool_call(tc["name"], tc["args"])
+            if tc["id"] not in approved:
+                results.append(ToolMessage(content="[已跳过] 用户本轮未批准执行该命令。",
+                                           tool_call_id=tc["id"], name=tc["name"]))
+                continue
+            tool = tools_by_name.get(tc["name"])
             if tool is None:
-                output = f"[错误] 未知工具 {tc['name']}"
-                success = False
+                output, success = f"[错误] 未知工具 {tc['name']}", False
             else:
                 try:
                     output = str(await tool.ainvoke(tc["args"]))
                     success = not output.startswith("[错误]")
                 except Exception as e:  # noqa: BLE001
                     output, success = f"[错误] 工具执行异常:{e}", False
-            results.append(ToolMessage(content=output, tool_call_id=tc["id"]))
+            results.append(ToolMessage(content=output, tool_call_id=tc["id"], name=tc["name"]))
             _audit(tc, level, summary, success, output)
-        return {"messages": results}
+        return {"messages": results, "approved_ids": []}
 
     # -- 路由 --
     def route_after_agent(state: AgentState) -> str:
         last = state["messages"][-1]
         return "guardrail" if getattr(last, "tool_calls", None) else END
-
-    def route_after_guardrail(state: AgentState) -> str:
-        # 若 guardrail 注入了 ToolMessage(被拒绝),回到 agent;否则执行工具
-        last = state["messages"][-1]
-        return "agent" if isinstance(last, ToolMessage) else "execute_tools"
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
@@ -105,7 +104,7 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None):
     graph.add_node("execute_tools", execute_tools_node)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", route_after_agent, ["guardrail", END])
-    graph.add_conditional_edges("guardrail", route_after_guardrail, ["agent", "execute_tools"])
+    graph.add_edge("guardrail", "execute_tools")
     graph.add_edge("execute_tools", "agent")
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())

@@ -64,6 +64,14 @@ def classify_cloud_tool(tool_name: str) -> CommandLevel:
     return CommandLevel.readonly
 
 
+def needs_approval(tool_name: str) -> bool:
+    """是否属于"会在服务器/云上真正执行"的命令,需要用户确认。
+
+    ssh_run 与云 MCP 工具(名含 '__')都算;list_servers 等本地只读元数据工具不算。
+    """
+    return tool_name == "ssh_run" or "__" in tool_name
+
+
 def classify_tool_call(tool_name: str, args: dict) -> tuple[CommandLevel, str]:
     """返回 (风险级别, 人类可读的操作摘要)。"""
     if tool_name == "ssh_run":

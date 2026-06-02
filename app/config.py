@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     admin_token: str = "change-me"
 
     require_approval_for_dangerous: bool = True
+    # 所有"可执行命令"(SSH / 云操作)执行前都需用户确认(逐条审批)
+    require_command_approval: bool = True
     default_dry_run: bool = False
 
 

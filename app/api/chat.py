@@ -1,11 +1,17 @@
-"""Agent 交互 API:发起任务、审批续跑。"""
+"""Agent 交互 API:流式发起任务、逐条审批续跑、历史记录查看。"""
+import json
 import uuid
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from app.agent.runtime import resume_turn, run_turn
+from app.agent.runtime import astream_resume, astream_turn
 from app.api.deps import require_admin
+from app.db.base import get_db
+from app.db.models import Conversation, Message
 
 router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_admin)])
 
@@ -17,18 +23,59 @@ class ChatIn(BaseModel):
 
 class ApproveIn(BaseModel):
     thread_id: str
-    approved: bool
-    by: str = "admin"
+    action: str = "all"            # all | selected | reject
+    ids: list[str] = []
 
 
-@router.post("")
-async def chat(body: ChatIn):
+def _sse(gen: AsyncIterator[dict]) -> StreamingResponse:
+    async def event_stream():
+        async for ev in gen:
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/stream")
+async def chat_stream(body: ChatIn):
     thread_id = body.thread_id or uuid.uuid4().hex
-    result = await run_turn(thread_id, body.message)
-    return {"thread_id": thread_id, **result}
+
+    async def gen():
+        yield {"type": "thread", "thread_id": thread_id}
+        async for ev in astream_turn(thread_id, body.message):
+            yield ev
+
+    return _sse(gen())
 
 
 @router.post("/approve")
 async def approve(body: ApproveIn):
-    result = await resume_turn(body.thread_id, body.approved, body.by)
-    return {"thread_id": body.thread_id, **result}
+    return _sse(astream_resume(body.thread_id, body.action, body.ids))
+
+
+# ---------------- 历史记录 ----------------
+@router.get("/conversations")
+def list_conversations(db: Session = Depends(get_db)):
+    rows = db.query(Conversation).order_by(Conversation.id.desc()).all()
+    return [{"thread_id": c.thread_id, "title": c.title, "status": c.status,
+             "created_at": c.created_at.isoformat()} for c in rows]
+
+
+@router.get("/conversations/{thread_id}")
+def get_conversation(thread_id: str, db: Session = Depends(get_db)):
+    c = db.query(Conversation).filter_by(thread_id=thread_id).first()
+    if c is None:
+        raise HTTPException(404, "会话不存在")
+    msgs = db.query(Message).filter_by(conversation_id=c.id).order_by(Message.id).all()
+    return {"thread_id": thread_id, "title": c.title, "status": c.status,
+            "messages": [{"role": m.role, "content": m.content, "tool_name": m.tool_name,
+                          "created_at": m.created_at.isoformat()} for m in msgs]}
+
+
+@router.delete("/conversations/{thread_id}")
+def delete_conversation(thread_id: str, db: Session = Depends(get_db)):
+    c = db.query(Conversation).filter_by(thread_id=thread_id).first()
+    if c is not None:
+        db.query(Message).filter_by(conversation_id=c.id).delete()
+        db.delete(c)
+        db.commit()
+    return {"ok": True}
