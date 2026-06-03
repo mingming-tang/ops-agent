@@ -9,11 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.agent.runtime import astream_resume, astream_turn
-from app.api.deps import require_admin
 from app.db.base import get_db
 from app.db.models import Conversation, Message
 
-router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 class ChatIn(BaseModel):

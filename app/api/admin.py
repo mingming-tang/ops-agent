@@ -2,18 +2,17 @@
 
 所有密钥/密码在写入时加密(crypto.encrypt),读取列表时一律不回传明文。
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
+from fastapi import Depends as _D
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin
 from app.db.base import get_db
 from app.db.crypto import encrypt
 from app.db.models import (AuditLog, CloudAccount, CloudType, ModelProvider, ProviderType,
                            Server)
-from fastapi import Depends as _D
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 def _commit(db: Session) -> None:

@@ -81,8 +81,6 @@
 <body>
 <header>
   <strong>🛠️ 运维 Agent 控制台</strong>
-  <input id="token" placeholder="Admin Token" style="width:240px"/>
-  <small>所有请求带 X-Admin-Token</small>
   <button id="themeToggle" class="btn ghost" onclick="toggleTheme()">🌙 深色</button>
 </header>
 <nav>
@@ -200,9 +198,8 @@ function toggleTheme(){
 applyTheme(localStorage.getItem('theme') || 'light');
 
 let threadId = null;
-function tok(){ return $('token').value.trim(); }
 async function api(path, method='GET', body){
-  const r = await fetch(path, {method, headers:{'Content-Type':'application/json','X-Admin-Token':tok()}, body: body?JSON.stringify(body):undefined});
+  const r = await fetch(path, {method, headers:{'Content-Type':'application/json'}, body: body?JSON.stringify(body):undefined});
   if(!r.ok){ let m=await r.text(); try{ m=JSON.parse(m).detail||m; }catch(e){} alert('请求失败 '+r.status+': '+m); throw new Error(r.status); }
   return r.json();
 }
@@ -256,7 +253,7 @@ function renderApproval(a){
 
 // 通用 SSE(POST + 流式读取)
 async function streamPost(path, body, onEvent){
-  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-Admin-Token':tok()},body:JSON.stringify(body)});
+  const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(!r.ok){ onEvent({type:'error',error:'HTTP '+r.status+' '+await r.text()}); return; }
   const reader=r.body.getReader(), dec=new TextDecoder(); let buf='';
   while(true){ const {value,done}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true});
