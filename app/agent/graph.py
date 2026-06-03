@@ -43,16 +43,19 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None):
     # -- 节点:护栏 + 逐条审批 --
     def guardrail_node(state: AgentState) -> dict:
         last: AIMessage = state["messages"][-1]
-        pending = []          # 需用户确认的可执行命令
-        auto_ids = []         # 无需确认的(如 list_servers)直接放行
+        pending = []          # 需用户确认的命令(变更 / 危险)
+        auto_ids = []         # 无需确认直接执行的(只读命令、list_servers 等本地工具)
         for tc in last.tool_calls:
-            if needs_approval(tc["name"]):
-                level, summary = classify_tool_call(tc["name"], tc["args"])
+            if not needs_approval(tc["name"]):
+                auto_ids.append(tc["id"])          # 本地只读工具
+                continue
+            level, summary = classify_tool_call(tc["name"], tc["args"])
+            if level == CommandLevel.readonly:
+                auto_ids.append(tc["id"])          # 只读命令:直接执行,无需确认
+            else:
                 pending.append({"id": tc["id"], "name": tc["name"], "level": level.value,
                                 "summary": summary, "command": tc["args"].get("command"),
                                 "args": tc["args"]})
-            else:
-                auto_ids.append(tc["id"])
 
         if not pending or not settings.require_command_approval:
             return {"approved_ids": [tc["id"] for tc in last.tool_calls]}
