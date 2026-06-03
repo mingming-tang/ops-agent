@@ -89,3 +89,29 @@ list_servers_tool = StructuredTool.from_function(
     name="list_servers",
     description="列出所有可用服务器及其标签,用于选择操作目标。",
 )
+
+
+def make_scoped_ssh_tools(allowed: set[str] | None) -> list[StructuredTool]:
+    """按"当前操作对象"限定 SSH 工具。allowed=None 表示不限制(可操作全部已登记服务器)。"""
+
+    async def _scoped_run(server_name: str, command: str, timeout: int = 60) -> str:
+        if allowed is not None and server_name not in allowed:
+            return (f"[错误] 本次会话被限定只能操作:{', '.join(sorted(allowed))};"
+                    f"不允许操作 '{server_name}'。")
+        return await _run_on_server(server_name, command, timeout)
+
+    def _scoped_list() -> str:
+        with SessionLocal() as db:
+            servers = [s for s in db.query(Server).all()
+                       if allowed is None or s.name in allowed]
+        if not servers:
+            return "当前没有可操作的服务器。"
+        lines = [f"- {s.name}  {s.username}@{s.host}:{s.port}  tags={s.tags}" for s in servers]
+        return "可用服务器:\n" + "\n".join(lines)
+
+    return [
+        StructuredTool.from_function(func=_scoped_list, name="list_servers",
+                                     description="列出当前可操作的服务器及标签。"),
+        StructuredTool.from_function(coroutine=_scoped_run, name="ssh_run",
+                                     description=ssh_run_tool.description, args_schema=SSHRunInput),
+    ]

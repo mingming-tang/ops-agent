@@ -19,12 +19,16 @@ router = APIRouter(prefix="/chat", tags=["chat"], dependencies=[Depends(require_
 class ChatIn(BaseModel):
     message: str
     thread_id: str | None = None   # 不传则新建会话
+    servers: list[str] = []        # 限定操作的服务器名;空=不限制
+    clouds: list[str] = []         # 限定操作的云账号名;空=不限制
 
 
 class ApproveIn(BaseModel):
     thread_id: str
     action: str = "all"            # all | selected | reject
     ids: list[str] = []
+    servers: list[str] = []
+    clouds: list[str] = []
 
 
 def _sse(gen: AsyncIterator[dict]) -> StreamingResponse:
@@ -41,7 +45,7 @@ async def chat_stream(body: ChatIn):
 
     async def gen():
         yield {"type": "thread", "thread_id": thread_id}
-        async for ev in astream_turn(thread_id, body.message):
+        async for ev in astream_turn(thread_id, body.message, body.servers, body.clouds):
             yield ev
 
     return _sse(gen())
@@ -49,7 +53,7 @@ async def chat_stream(body: ChatIn):
 
 @router.post("/approve")
 async def approve(body: ApproveIn):
-    return _sse(astream_resume(body.thread_id, body.action, body.ids))
+    return _sse(astream_resume(body.thread_id, body.action, body.ids, body.servers, body.clouds))
 
 
 # ---------------- 历史记录 ----------------

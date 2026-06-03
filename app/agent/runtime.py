@@ -25,7 +25,7 @@ from app.db.base import SessionLocal
 from app.db.models import CloudAccount, Conversation, Message, ModelProvider
 from app.llm.registry import build_chat_model
 from app.tools.mcp_manager import load_cloud_tools
-from app.tools.ssh import list_servers_tool, ssh_run_tool
+from app.tools.ssh import make_scoped_ssh_tools
 
 settings = get_settings()
 
@@ -46,15 +46,36 @@ def _get_default_model() -> ModelProvider:
         return cfg
 
 
-async def _assemble():
+async def _assemble(servers: list[str] | None = None, clouds: list[str] | None = None):
+    """按"当前操作对象"装配图。servers/clouds 为空表示不限制(可操作全部)。"""
     model = build_chat_model(_get_default_model())
-    tools = [list_servers_tool, ssh_run_tool]
+
+    allowed = set(servers) if servers else None
+    tools = make_scoped_ssh_tools(allowed)
+
     with SessionLocal() as db:
-        accounts = db.query(CloudAccount).filter(CloudAccount.enabled).all()
+        q = db.query(CloudAccount).filter(CloudAccount.enabled)
+        if clouds:
+            q = q.filter(CloudAccount.name.in_(clouds))
+        accounts = q.all()
         for a in accounts:
             db.expunge(a)
     tools += await load_cloud_tools(accounts)
-    return build_agent(model, tools, checkpointer=_checkpointer)
+
+    suffix = _scope_suffix(servers, clouds)
+    return build_agent(model, tools, checkpointer=_checkpointer, system_suffix=suffix)
+
+
+def _scope_suffix(servers: list[str] | None, clouds: list[str] | None) -> str:
+    if not servers and not clouds:
+        return ""
+    parts = []
+    if servers:
+        parts.append(f"服务器 [{', '.join(servers)}]")
+    if clouds:
+        parts.append(f"云账号 [{', '.join(clouds)}]")
+    return ("## 当前操作对象限定\n本次会话只允许操作:" + ";".join(parts)
+            + "。不要操作未列出的对象。")
 
 
 # ----------------------------------------------------------------------------
@@ -109,6 +130,8 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
 
                 for node, upd in payload.items():
                     if node == "agent":
+                        if (upd or {}).get("last_io"):
+                            yield {"type": "llm_io", **upd["last_io"]}
                         msgs = (upd or {}).get("messages") or []
                         if msgs and getattr(msgs[-1], "tool_calls", None):
                             for tc in msgs[-1].tool_calls:
@@ -130,20 +153,24 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
         yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
 
 
-async def astream_turn(thread_id: str, user_message: str) -> AsyncIterator[dict]:
+async def astream_turn(thread_id: str, user_message: str,
+                       servers: list[str] | None = None,
+                       clouds: list[str] | None = None) -> AsyncIterator[dict]:
     _ensure_conversation(thread_id, title=user_message)
     _save_message(thread_id, "user", user_message)
-    agent = await _assemble()
+    agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
     graph_input = {"messages": [HumanMessage(content=user_message)], "plan": [],
                    "current_step": 0, "dry_run": settings.default_dry_run, "notes": "",
-                   "approved_ids": []}
+                   "approved_ids": [], "last_io": {}}
     async for ev in _run_stream(agent, graph_input, config, thread_id):
         yield ev
 
 
-async def astream_resume(thread_id: str, action: str, ids: list[str]) -> AsyncIterator[dict]:
-    agent = await _assemble()
+async def astream_resume(thread_id: str, action: str, ids: list[str],
+                         servers: list[str] | None = None,
+                         clouds: list[str] | None = None) -> AsyncIterator[dict]:
+    agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
     cmd = Command(resume={"action": action, "ids": ids or []})
     async for ev in _run_stream(agent, cmd, config, thread_id):

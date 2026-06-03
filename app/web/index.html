@@ -66,6 +66,16 @@
   @keyframes blink { 50% { opacity: 0; } }
   .op { margin: 6px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .op code { flex: 1; word-break: break-all; }
+  /* 操作对象选择栏 */
+  .targetBar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; padding: 8px 0; border-top: 1px dashed var(--card-border); margin-top: 8px; }
+  .targetBar .tlabel { color: var(--muted); }
+  .targetBar label { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; }
+  .targetBar .dbgLabel { margin-left: auto; }
+  #serverChecks label, #cloudChecks label { background: var(--pre-bg); padding: 2px 8px; border-radius: 10px; }
+  /* 调试面板 */
+  .dbg { margin: 6px 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 10px; background: var(--pre-bg); font-size: 12px; }
+  .dbg summary { cursor: pointer; color: var(--muted); }
+  .dbgmsg b { color: var(--primary); }
 </style>
 </head>
 <body>
@@ -92,7 +102,14 @@
       </aside>
       <div class="card convPane">
         <div id="messages"></div>
+        <div id="debugPane"></div>
         <div id="approvalBox"></div>
+        <div class="targetBar">
+          <span class="tlabel">操作对象<small>(不选=全部)</small>:</span>
+          <span class="tgroup">🖥️ 服务器 <span id="serverChecks"></span></span>
+          <span class="tgroup">☁️ 云账号 <span id="cloudChecks"></span></span>
+          <label class="dbgLabel"><input type="checkbox" id="dbgToggle" style="width:auto"/> 🐞 显示模型请求/返回</label>
+        </div>
         <textarea id="input" rows="3" placeholder="例:检查 web-prod-1 的磁盘使用率,>80% 的分区列出最大的5个目录(⌘/Ctrl+Enter 发送)"></textarea>
         <button class="btn" id="sendBtn" onclick="send()">发送 (⌘↵)</button>
         <small id="threadLabel"></small>
@@ -194,7 +211,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
   b.classList.add('active'); $(b.dataset.tab).classList.add('active');
-  if(b.dataset.tab==='chat') loadConversations();
+  if(b.dataset.tab==='chat'){ loadConversations(); loadTargets(); }
   if(b.dataset.tab==='models') loadModels();
   if(b.dataset.tab==='servers') loadServers();
   if(b.dataset.tab==='clouds') loadClouds();
@@ -208,7 +225,7 @@ function scroll(){ const m=$('messages'); m.scrollTop=m.scrollHeight; }
 function addMsg(role, text){ const d=document.createElement('div'); d.className='msg '+(role==='user'?'user':'bot');
   d.innerHTML='<b>'+(role==='user'?'你':'Agent')+'</b><div class="body"></div>'; d.querySelector('.body').textContent=text||'';
   $('messages').appendChild(d); scroll(); return d.querySelector('.body'); }
-function newThread(){ threadId=null; $('messages').innerHTML=''; $('approvalBox').innerHTML=''; $('threadLabel').textContent='新会话';
+function newThread(){ threadId=null; $('messages').innerHTML=''; $('approvalBox').innerHTML=''; $('debugPane').innerHTML=''; dbgCount=0; $('threadLabel').textContent='新会话';
   document.querySelectorAll('.histList-item').forEach(x=>x.classList.remove('active')); }
 function setBusy(b){ $('sendBtn').disabled=b; $('input').disabled=b; }
 
@@ -220,6 +237,7 @@ function handleEvent(ev, ctx){
       $('messages').appendChild(el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span><br><code>${esc(cmd)}</code></div>`)); scroll(); }
   else if(ev.type==='tool_result'){ const skip=(ev.output||'').startsWith('[已跳过]');
       $('messages').appendChild(el(`<div class="toolblk ${skip?'skipped':''}">↳ 结果 <small>${esc(ev.name||'')}</small><pre>${esc(ev.output||'')}</pre></div>`)); scroll(); }
+  else if(ev.type==='llm_io'){ if($('dbgToggle').checked) renderLlmIo(ev); }
   else if(ev.type==='approval_required'){ if(ctx.bot) ctx.bot.classList.remove('cursor'); renderApproval(ev); }
   else if(ev.type==='done'){ if(ctx.bot) ctx.bot.classList.remove('cursor'); }
   else if(ev.type==='error'){ addMsg('bot','⚠️ 出错:'+ev.error); }
@@ -250,14 +268,47 @@ async function send(){
   const msg=$('input').value.trim(); if(!msg) return;
   addMsg('user', msg); $('input').value=''; setBusy(true);
   const ctx={bot:null};
-  try{ await streamPost('/chat/stream',{message:msg, thread_id:threadId}, ev=>handleEvent(ev,ctx)); }
+  try{ await streamPost('/chat/stream',{message:msg, thread_id:threadId,
+        servers:selectedServers(), clouds:selectedClouds()}, ev=>handleEvent(ev,ctx)); }
   finally{ setBusy(false); loadConversations(); }
 }
 async function approve(action, ids){
   $('approvalBox').innerHTML=''; setBusy(true);   // handleEvent 会在需要时重新渲染审批框
   const ctx={bot:null};
-  try{ await streamPost('/chat/approve',{thread_id:threadId, action, ids}, ev=>handleEvent(ev,ctx)); }
+  try{ await streamPost('/chat/approve',{thread_id:threadId, action, ids,
+        servers:selectedServers(), clouds:selectedClouds()}, ev=>handleEvent(ev,ctx)); }
   finally{ setBusy(false); loadConversations(); }
+}
+
+// ---- 操作对象选择 ----
+async function loadTargets(){
+  const [svs, cls] = await Promise.all([api('/admin/servers'), api('/admin/cloud-accounts')]);
+  $('serverChecks').innerHTML = svs.length
+    ? svs.map(s=>`<label><input type="checkbox" class="svchk" value="${esc(s.name)}" style="width:auto"/>${esc(s.name)}</label>`).join('')
+    : '<small>无</small>';
+  $('cloudChecks').innerHTML = cls.filter(c=>c.enabled).length
+    ? cls.filter(c=>c.enabled).map(c=>`<label><input type="checkbox" class="clchk" value="${esc(c.name)}" style="width:auto"/>${esc(c.name)}</label>`).join('')
+    : '<small>无</small>';
+}
+const selectedServers = () => [...document.querySelectorAll('.svchk:checked')].map(x=>x.value);
+const selectedClouds  = () => [...document.querySelectorAll('.clchk:checked')].map(x=>x.value);
+
+// ---- 调试:模型请求/返回 ----
+let dbgCount = 0;
+function renderLlmIo(ev){
+  dbgCount++;
+  const p=(ev.prompt||[]).map(m=>{
+    let tc = m.tool_calls ? '<div><i>tool_calls:</i> '+esc(JSON.stringify(m.tool_calls))+'</div>' : '';
+    return `<div class="dbgmsg"><b>${esc(m.role)}</b><pre>${esc(m.content||'')}</pre>${tc}</div>`;
+  }).join('');
+  const r=ev.response||{};
+  const rtc = (r.tool_calls&&r.tool_calls.length) ? '<div><i>tool_calls:</i> '+esc(JSON.stringify(r.tool_calls))+'</div>' : '';
+  $('debugPane').appendChild(el(
+    `<details class="dbg"><summary>🐞 模型请求/返回 #${dbgCount}(prompt ${ (ev.prompt||[]).length } 条消息)</summary>
+       <b>▷ 发送给模型的 Prompt</b>${p}
+       <b>◁ 模型返回</b><div class="dbgmsg"><pre>${esc(r.content||'(空,仅工具调用)')}</pre>${rtc}</div>
+     </details>`));
+  scroll();
 }
 
 // ---- 历史记录 ----
@@ -269,7 +320,7 @@ async function loadConversations(){
 }
 async function openConversation(tid){
   const c=await api('/chat/conversations/'+tid);
-  threadId=tid; $('approvalBox').innerHTML=''; $('threadLabel').textContent='thread: '+tid;
+  threadId=tid; $('approvalBox').innerHTML=''; $('debugPane').innerHTML=''; dbgCount=0; $('threadLabel').textContent='thread: '+tid;
   $('messages').innerHTML='';
   c.messages.forEach(m=>{
     if(m.role==='tool'){ const skip=(m.content||'').startsWith('[已跳过]');
@@ -290,7 +341,7 @@ async function delConversation(tid){
 $('input').addEventListener('keydown', e=>{
   if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); send(); }
 });
-loadConversations();
+loadConversations(); loadTargets();
 
 // ---- 模型 ----
 async function addModel(){

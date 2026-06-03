@@ -28,17 +28,21 @@ from app.db.models import AuditLog, CommandLevel
 settings = get_settings()
 
 
-def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None):
+def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
+                system_suffix: str = ""):
     tools_by_name = {t.name: t for t in tools}
     model_with_tools = model.bind_tools(tools)
+    system_text = SYSTEM_PROMPT + (("\n\n" + system_suffix) if system_suffix else "")
 
     # -- 节点:推理 --
     async def agent_node(state: AgentState) -> dict:
         messages = state["messages"]
         if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=SYSTEM_PROMPT), *messages]
+            messages = [SystemMessage(content=system_text), *messages]
         response = await model_with_tools.ainvoke(messages)
-        return {"messages": [response]}
+        return {"messages": [response],
+                "last_io": {"prompt": _render_prompt(messages),
+                            "response": _render_response(response)}}
 
     # -- 节点:护栏 + 逐条审批 --
     def guardrail_node(state: AgentState) -> dict:
@@ -111,6 +115,25 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None):
     graph.add_edge("execute_tools", "agent")
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())
+
+
+def _render_prompt(messages: list) -> list[dict]:
+    """把发给模型的消息序列化成可读结构(供前端调试查看)。"""
+    out = []
+    for m in messages:
+        role = getattr(m, "type", m.__class__.__name__)
+        content = m.content if isinstance(m.content, str) else str(m.content)
+        item = {"role": role, "content": content[:6000]}
+        if getattr(m, "tool_calls", None):
+            item["tool_calls"] = [{"name": tc["name"], "args": tc["args"]} for tc in m.tool_calls]
+        out.append(item)
+    return out
+
+
+def _render_response(response) -> dict:
+    return {"content": response.content if isinstance(response.content, str) else str(response.content),
+            "tool_calls": [{"name": tc["name"], "args": tc["args"]}
+                           for tc in (getattr(response, "tool_calls", None) or [])]}
 
 
 def _audit(tool_call: dict, level: CommandLevel, summary: str, success: bool, output: str) -> None:
