@@ -19,10 +19,10 @@ from app.db.models import Server
 class SSHRunInput(BaseModel):
     server_name: str = Field(description="目标服务器名称(在后台已登记)")
     command: str = Field(description="要在服务器上执行的 shell 命令")
-    timeout: int = Field(default=60, description="超时秒数")
+    timeout: int = Field(default=600, description="超时秒数")
 
 
-async def _run_on_server(server_name: str, command: str, timeout: int = 60) -> str:
+async def _run_on_server(server_name: str, command: str, timeout: int = 600) -> str:
     with SessionLocal() as db:
         server = db.query(Server).filter(Server.name == server_name).first()
         if server is None:
@@ -94,7 +94,7 @@ list_servers_tool = StructuredTool.from_function(
 def make_scoped_ssh_tools(allowed: set[str] | None) -> list[StructuredTool]:
     """按"当前操作对象"限定 SSH 工具。allowed=None 表示不限制(可操作全部已登记服务器)。"""
 
-    async def _scoped_run(server_name: str, command: str, timeout: int = 60) -> str:
+    async def _scoped_run(server_name: str, command: str, timeout: int = 600) -> str:
         if allowed is not None and server_name not in allowed:
             return (f"[错误] 本次会话被限定只能操作:{', '.join(sorted(allowed))};"
                     f"不允许操作 '{server_name}'。")
