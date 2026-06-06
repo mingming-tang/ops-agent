@@ -108,6 +108,7 @@ def _set_status(thread_id: str, status: str) -> None:
 # ----------------------------------------------------------------------------
 async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterator[dict]:
     assistant_buf: list[str] = []
+    finished = False           # 是否正常跑完(用于区分"客户端中断")
     try:
         async for mode, payload in agent.astream(
             graph_input, config, stream_mode=["updates", "messages"]
@@ -125,8 +126,9 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
                         _save_message(thread_id, "assistant", "".join(assistant_buf))
                         assistant_buf = []
                     _set_status(thread_id, "waiting_approval")
+                    finished = True  # 正常暂停,等待 /chat/approve(不算中断)
                     yield {"type": "approval_required", **payload["__interrupt__"][0].value}
-                    return  # 暂停,等待 /chat/approve
+                    return
 
                 for node, upd in payload.items():
                     if node == "agent":
@@ -145,12 +147,21 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
                                    "output": m.content, "tool_call_id": m.tool_call_id}
 
         final = "".join(assistant_buf)
+        assistant_buf = []
         if final:
             _save_message(thread_id, "assistant", final)
         _set_status(thread_id, "done")
+        finished = True
         yield {"type": "done", "reply": final}
     except Exception as e:  # noqa: BLE001
+        finished = True
         yield {"type": "error", "error": f"{type(e).__name__}: {e}"}
+    finally:
+        # 客户端中断(fetch abort → 服务端生成器被关闭)时,保存已生成的部分并标记中断
+        if not finished and assistant_buf:
+            _save_message(thread_id, "assistant", "".join(assistant_buf) + "\n…(已中断)")
+        if not finished:
+            _set_status(thread_id, "interrupted")
 
 
 async def astream_turn(thread_id: str, user_message: str,

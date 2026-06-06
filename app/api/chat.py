@@ -74,6 +74,16 @@ def get_conversation(thread_id: str, db: Session = Depends(get_db)):
                           "created_at": m.created_at.isoformat()} for m in msgs]}
 
 
+@router.post("/conversations/{thread_id}/end")
+def end_conversation(thread_id: str, db: Session = Depends(get_db)):
+    """结束任务:把会话标记为已结束(不再续聊)。"""
+    c = db.query(Conversation).filter_by(thread_id=thread_id).first()
+    if c is not None:
+        c.status = "ended"
+        db.commit()
+    return {"ok": True}
+
+
 @router.delete("/conversations/{thread_id}")
 def delete_conversation(thread_id: str, db: Session = Depends(get_db)):
     c = db.query(Conversation).filter_by(thread_id=thread_id).first()
