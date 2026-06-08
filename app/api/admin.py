@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.base import get_db
 from app.db.crypto import encrypt
 from app.db.models import (AuditLog, CloudAccount, CloudType, ModelProvider, ProviderType,
-                           Server)
+                           Server, SSHKey)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -64,6 +64,38 @@ def delete_model(model_id: int, db: Session = _D(get_db)):
     db.commit(); return {"ok": True}
 
 
+# ---------- SSH 秘钥库 ----------
+class SSHKeyIn(BaseModel):
+    name: str
+    private_key: str | None = None       # 新建必填;编辑时留空表示保持不变
+    passphrase: str | None = None
+    description: str | None = None
+
+
+@router.post("/ssh-keys")
+def create_ssh_key(body: SSHKeyIn, db: Session = _D(get_db)):
+    if not body.private_key:
+        raise HTTPException(422, "私钥必填")
+    k = SSHKey(name=body.name, private_key_enc=encrypt(body.private_key),
+               passphrase_enc=encrypt(body.passphrase), description=body.description)
+    db.add(k); _commit(db)
+    return {"id": k.id, "name": k.name}
+
+
+@router.get("/ssh-keys")
+def list_ssh_keys(db: Session = _D(get_db)):
+    return [{"id": k.id, "name": k.name, "description": k.description,
+             "created_at": k.created_at.isoformat()} for k in db.query(SSHKey).all()]
+
+
+@router.delete("/ssh-keys/{key_id}")
+def delete_ssh_key(key_id: int, db: Session = _D(get_db)):
+    # 解除仍引用该密钥的服务器,避免悬空外键
+    db.query(Server).filter(Server.ssh_key_id == key_id).update({Server.ssh_key_id: None})
+    db.query(SSHKey).filter(SSHKey.id == key_id).delete()
+    db.commit(); return {"ok": True}
+
+
 # ---------- 服务器 ----------
 class ServerIn(BaseModel):
     name: str
@@ -74,6 +106,7 @@ class ServerIn(BaseModel):
     password: str | None = None
     private_key: str | None = None
     passphrase: str | None = None
+    ssh_key_id: int | None = None        # 选用密钥库中的私钥(优先于 private_key)
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
 
@@ -84,7 +117,7 @@ def create_server(body: ServerIn, db: Session = _D(get_db)):
         name=body.name, host=body.host, port=body.port, username=body.username,
         auth_type=body.auth_type, password_enc=encrypt(body.password),
         private_key_enc=encrypt(body.private_key), passphrase_enc=encrypt(body.passphrase),
-        tags=body.tags, description=body.description,
+        ssh_key_id=body.ssh_key_id, tags=body.tags, description=body.description,
     )
     db.add(s); _commit(db)
     return {"id": s.id, "name": s.name}
@@ -93,7 +126,8 @@ def create_server(body: ServerIn, db: Session = _D(get_db)):
 @router.get("/servers")
 def list_servers(db: Session = _D(get_db)):
     return [{"id": s.id, "name": s.name, "host": s.host, "port": s.port,
-             "username": s.username, "auth_type": s.auth_type, "tags": s.tags}
+             "username": s.username, "auth_type": s.auth_type,
+             "ssh_key_id": s.ssh_key_id, "tags": s.tags}
             for s in db.query(Server).all()]
 
 
@@ -104,7 +138,7 @@ def get_server(server_id: int, db: Session = _D(get_db)):
         raise HTTPException(404, "服务器不存在")
     return {"id": s.id, "name": s.name, "host": s.host, "port": s.port,
             "username": s.username, "auth_type": s.auth_type, "tags": s.tags,
-            "description": s.description,
+            "description": s.description, "ssh_key_id": s.ssh_key_id,
             "has_password": bool(s.password_enc), "has_key": bool(s.private_key_enc)}
 
 
@@ -115,6 +149,7 @@ def update_server(server_id: int, body: ServerIn, db: Session = _D(get_db)):
         raise HTTPException(404, "服务器不存在")
     s.name, s.host, s.port, s.username = body.name, body.host, body.port, body.username
     s.auth_type, s.tags, s.description = body.auth_type, body.tags, body.description
+    s.ssh_key_id = body.ssh_key_id
     # 密钥类字段:留空表示"保持不变",只有传了新值才覆盖
     if body.password:
         s.password_enc = encrypt(body.password)

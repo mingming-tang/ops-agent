@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.agent.runtime import astream_resume, astream_turn
+from app.agent.runtime import astream_clarify, astream_resume, astream_turn
 from app.db.base import get_db
 from app.db.models import Conversation, Message
 
@@ -20,6 +20,7 @@ class ChatIn(BaseModel):
     thread_id: str | None = None   # 不传则新建会话
     servers: list[str] = []        # 限定操作的服务器名;空=不限制
     clouds: list[str] = []         # 限定操作的云账号名;空=不限制
+    auto_approve_all: bool = False # 本会话所有命令无需确认
 
 
 class ApproveIn(BaseModel):
@@ -27,6 +28,13 @@ class ApproveIn(BaseModel):
     action: str = "all"            # all | selected | reject
     ids: list[str] = []
     remember: bool = False         # 勾选后:本次批准的命令下次不再确认,直接执行
+    servers: list[str] = []
+    clouds: list[str] = []
+
+
+class ClarifyIn(BaseModel):
+    thread_id: str
+    answer: str = ""               # 用户对 clarify 问题的选择/补充
     servers: list[str] = []
     clouds: list[str] = []
 
@@ -45,7 +53,8 @@ async def chat_stream(body: ChatIn):
 
     async def gen():
         yield {"type": "thread", "thread_id": thread_id}
-        async for ev in astream_turn(thread_id, body.message, body.servers, body.clouds):
+        async for ev in astream_turn(thread_id, body.message, body.servers, body.clouds,
+                                     body.auto_approve_all):
             yield ev
 
     return _sse(gen())
@@ -55,6 +64,11 @@ async def chat_stream(body: ChatIn):
 async def approve(body: ApproveIn):
     return _sse(astream_resume(body.thread_id, body.action, body.ids, body.remember,
                                body.servers, body.clouds))
+
+
+@router.post("/clarify")
+async def clarify(body: ClarifyIn):
+    return _sse(astream_clarify(body.thread_id, body.answer, body.servers, body.clouds))
 
 
 # ---------------- 历史记录 ----------------

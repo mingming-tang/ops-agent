@@ -13,16 +13,17 @@ from pydantic import BaseModel, Field
 
 from app.db.base import SessionLocal
 from app.db.crypto import decrypt
-from app.db.models import Server
+from app.db.models import Server, SSHKey
 
 
 class SSHRunInput(BaseModel):
     server_name: str = Field(description="目标服务器名称(在后台已登记)")
     command: str = Field(description="要在服务器上执行的 shell 命令")
+    intent: str = Field(default="", description="用一句话说明这条命令的目的/作用(给人看,如'查看磁盘使用率')")
     timeout: int = Field(default=600, description="超时秒数")
 
 
-async def _run_on_server(server_name: str, command: str, timeout: int = 600) -> str:
+async def _run_on_server(server_name: str, command: str, intent: str = "", timeout: int = 600) -> str:
     with SessionLocal() as db:
         server = db.query(Server).filter(Server.name == server_name).first()
         if server is None:
@@ -34,8 +35,15 @@ async def _run_on_server(server_name: str, command: str, timeout: int = 600) -> 
             "known_hosts": None,  # 生产应配置 known_hosts 做主机指纹校验
         }
         if server.auth_type == "key":
-            key = decrypt(server.private_key_enc)
-            passphrase = decrypt(server.passphrase_enc)
+            # 优先用密钥库中选定的私钥,否则用服务器自带私钥
+            key_enc, pass_enc = server.private_key_enc, server.passphrase_enc
+            if server.ssh_key_id is not None:
+                sk = db.get(SSHKey, server.ssh_key_id)
+                if sk is None:
+                    return f"[错误] 服务器 '{server_name}' 引用的密钥(id={server.ssh_key_id})不存在。"
+                key_enc, pass_enc = sk.private_key_enc, sk.passphrase_enc
+            key = decrypt(key_enc)
+            passphrase = decrypt(pass_enc)
             conn_kwargs["client_keys"] = [asyncssh.import_private_key(key, passphrase)]
         else:
             conn_kwargs["password"] = decrypt(server.password_enc)
@@ -94,11 +102,11 @@ list_servers_tool = StructuredTool.from_function(
 def make_scoped_ssh_tools(allowed: set[str] | None) -> list[StructuredTool]:
     """按"当前操作对象"限定 SSH 工具。allowed=None 表示不限制(可操作全部已登记服务器)。"""
 
-    async def _scoped_run(server_name: str, command: str, timeout: int = 600) -> str:
+    async def _scoped_run(server_name: str, command: str, intent: str = "", timeout: int = 600) -> str:
         if allowed is not None and server_name not in allowed:
             return (f"[错误] 本次会话被限定只能操作:{', '.join(sorted(allowed))};"
                     f"不允许操作 '{server_name}'。")
-        return await _run_on_server(server_name, command, timeout)
+        return await _run_on_server(server_name, command, intent, timeout)
 
     def _scoped_list() -> str:
         with SessionLocal() as db:

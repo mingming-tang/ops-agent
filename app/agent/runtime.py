@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.db.base import SessionLocal
 from app.db.models import CloudAccount, Conversation, Message, ModelProvider
 from app.llm.registry import build_chat_model
+from app.tools.clarify import clarify_tool
 from app.tools.mcp_manager import load_cloud_tools
 from app.tools.ssh import make_scoped_ssh_tools
 
@@ -51,7 +52,7 @@ async def _assemble(servers: list[str] | None = None, clouds: list[str] | None =
     model = build_chat_model(_get_default_model())
 
     allowed = set(servers) if servers else None
-    tools = make_scoped_ssh_tools(allowed)
+    tools = [*make_scoped_ssh_tools(allowed), clarify_tool]
 
     with SessionLocal() as db:
         q = db.query(CloudAccount).filter(CloudAccount.enabled)
@@ -126,8 +127,10 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
                         _save_message(thread_id, "assistant", "".join(assistant_buf))
                         assistant_buf = []
                     _set_status(thread_id, "waiting_approval")
-                    finished = True  # 正常暂停,等待 /chat/approve(不算中断)
-                    yield {"type": "approval_required", **payload["__interrupt__"][0].value}
+                    finished = True  # 正常暂停,等待 /chat/approve 或 /chat/clarify(不算中断)
+                    intr = dict(payload["__interrupt__"][0].value)  # 含 type: approval_required | clarify_required
+                    intr.setdefault("type", "approval_required")
+                    yield intr
                     return
 
                 for node, upd in payload.items():
@@ -166,14 +169,15 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
 
 async def astream_turn(thread_id: str, user_message: str,
                        servers: list[str] | None = None,
-                       clouds: list[str] | None = None) -> AsyncIterator[dict]:
+                       clouds: list[str] | None = None,
+                       auto_approve_all: bool = False) -> AsyncIterator[dict]:
     _ensure_conversation(thread_id, title=user_message)
     _save_message(thread_id, "user", user_message)
     agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
     graph_input = {"messages": [HumanMessage(content=user_message)], "plan": [],
                    "current_step": 0, "dry_run": settings.default_dry_run, "notes": "",
-                   "approved_ids": [], "last_io": {}}
+                   "approved_ids": [], "auto_approve_all": auto_approve_all, "last_io": {}}
     async for ev in _run_stream(agent, graph_input, config, thread_id):
         yield ev
 
@@ -185,5 +189,16 @@ async def astream_resume(thread_id: str, action: str, ids: list[str],
     agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
     cmd = Command(resume={"action": action, "ids": ids or [], "remember": remember})
+    async for ev in _run_stream(agent, cmd, config, thread_id):
+        yield ev
+
+
+async def astream_clarify(thread_id: str, answer: str,
+                          servers: list[str] | None = None,
+                          clouds: list[str] | None = None) -> AsyncIterator[dict]:
+    """用户回答 clarify 后续跑:把答案作为工具结果回灌给模型。"""
+    agent = await _assemble(servers, clouds)
+    config = {"configurable": {"thread_id": thread_id}}
+    cmd = Command(resume={"answer": answer})
     async for ev in _run_stream(agent, cmd, config, thread_id):
         yield ev

@@ -30,6 +30,7 @@ from app.agent.state import AgentState
 from app.config import get_settings
 from app.db.base import SessionLocal
 from app.db.models import AuditLog, CommandLevel
+from app.tools.clarify import CLARIFY_TOOL_NAME
 
 settings = get_settings()
 
@@ -53,6 +54,9 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
     # -- 节点:护栏 + 逐条审批 --
     async def guardrail_node(state: AgentState) -> dict:
         last: AIMessage = state["messages"][-1]
+        # 本会话勾选了"所有命令无需确认":全部直接放行,连分级都跳过
+        if state.get("auto_approve_all"):
+            return {"approved_ids": [tc["id"] for tc in last.tool_calls]}
         pending = []          # 需用户确认的命令(变更 / 危险)
         auto_ids = []         # 无需确认直接执行的(只读命令、白名单、list_servers 等本地工具)
         for tc in last.tool_calls:
@@ -74,7 +78,7 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
             else:
                 pending.append({"id": tc["id"], "name": tc["name"], "level": level.value,
                                 "summary": summary, "command": tc["args"].get("command"),
-                                "args": tc["args"]})
+                                "intent": tc["args"].get("intent", ""), "args": tc["args"]})
 
         if not pending or not settings.require_command_approval:
             return {"approved_ids": [tc["id"] for tc in last.tool_calls]}
@@ -121,19 +125,46 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
             _audit(tc, level, summary, success, output)
         return {"messages": results, "approved_ids": []}
 
+    # -- 节点:澄清(任务不明确时 interrupt 让用户选)--
+    async def clarify_node(state: AgentState) -> dict:
+        last: AIMessage = state["messages"][-1]
+        results = []
+        for tc in last.tool_calls:
+            if tc["name"] != CLARIFY_TOOL_NAME:
+                # 与 clarify 同批的其它工具:本轮先不执行,提示模型澄清后再调用
+                results.append(ToolMessage(content="[已跳过] 请先完成澄清(clarify)后再调用其它工具。",
+                                           tool_call_id=tc["id"], name=tc["name"]))
+                continue
+            decision = interrupt({
+                "type": "clarify_required", "tool_call_id": tc["id"],
+                "question": tc["args"].get("question", ""),
+                "options": tc["args"].get("options", []) or [],
+            }) or {}
+            answer = (decision.get("answer") or "").strip()
+            results.append(ToolMessage(
+                content=(f"用户的选择/补充:{answer}" if answer else "用户未作答,请基于最安全的默认方案继续或再次澄清。"),
+                tool_call_id=tc["id"], name=CLARIFY_TOOL_NAME))
+        return {"messages": results}
+
     # -- 路由 --
     def route_after_agent(state: AgentState) -> str:
         last = state["messages"][-1]
-        return "guardrail" if getattr(last, "tool_calls", None) else END
+        if not getattr(last, "tool_calls", None):
+            return END
+        if any(tc["name"] == CLARIFY_TOOL_NAME for tc in last.tool_calls):
+            return "clarify"
+        return "guardrail"
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
     graph.add_node("guardrail", guardrail_node)
     graph.add_node("execute_tools", execute_tools_node)
+    graph.add_node("clarify", clarify_node)
     graph.add_edge(START, "agent")
-    graph.add_conditional_edges("agent", route_after_agent, ["guardrail", END])
+    graph.add_conditional_edges("agent", route_after_agent, ["guardrail", "clarify", END])
     graph.add_edge("guardrail", "execute_tools")
     graph.add_edge("execute_tools", "agent")
+    graph.add_edge("clarify", "agent")
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())
 

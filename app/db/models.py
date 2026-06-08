@@ -55,6 +55,18 @@ class ModelProvider(Base):
 # ----------------------------------------------------------------------------
 # 服务器:SSH 凭证
 # ----------------------------------------------------------------------------
+class SSHKey(Base):
+    """可复用的 SSH 私钥库:添加服务器时可直接选用,避免反复粘贴私钥。"""
+    __tablename__ = "ssh_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)     # 如 prod-deploy
+    private_key_enc: Mapped[str] = mapped_column(Text)
+    passphrase_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Server(Base):
     __tablename__ = "servers"
 
@@ -67,6 +79,8 @@ class Server(Base):
     password_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     private_key_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     passphrase_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 选用密钥库中的私钥(auth_type=key 且选了已有密钥时);为空则用上面的 private_key_enc
+    ssh_key_id: Mapped[int | None] = mapped_column(ForeignKey("ssh_keys.id"), nullable=True)
     tags: Mapped[list] = mapped_column(JSON, default=list)          # 如 ["prod", "web"]
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)

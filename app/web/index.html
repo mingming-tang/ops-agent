@@ -96,6 +96,7 @@
   <button data-tab="chat" class="active">对话</button>
   <button data-tab="models">模型</button>
   <button data-tab="servers">服务器</button>
+  <button data-tab="sshkeys">SSH秘钥</button>
   <button data-tab="clouds">云账号(MCP)</button>
   <button data-tab="audits">审计</button>
 </nav>
@@ -115,6 +116,7 @@
           <span class="tlabel">操作对象<small>(不选=全部)</small>:</span>
           <span class="tgroup">🖥️ 服务器 <span id="serverChecks"></span></span>
           <span class="tgroup">☁️ 云账号 <span id="cloudChecks"></span></span>
+          <label><input type="checkbox" id="autoApproveAll" style="width:auto"/> ⚡ 本会话所有命令无需确认</label>
           <label class="dbgLabel"><input type="checkbox" id="dbgToggle" style="width:auto"/> 🐞 显示模型请求/返回</label>
         </div>
         <div class="statusBar" id="statusBar"></div>
@@ -153,10 +155,11 @@
         <input id="s_host" placeholder="host/IP"/>
         <input id="s_port" placeholder="端口 22" value="22"/>
         <input id="s_user" placeholder="用户名"/>
-        <select id="s_auth"><option value="password">密码</option><option value="key">私钥</option></select>
+        <select id="s_auth" onchange="onAuthChange()"><option value="password">密码</option><option value="key">私钥</option></select>
         <input id="s_pass" placeholder="密码"/>
       </div>
-      <textarea id="s_key" rows="2" placeholder="私钥(auth=key 时填)"></textarea>
+      <select id="s_key_sel" style="display:none"><option value="">— 选择已保存的秘钥(或在下方粘贴)—</option></select>
+      <textarea id="s_key" rows="2" placeholder="私钥(auth=key 且未选已保存秘钥时填)"></textarea>
       <input id="s_tags" placeholder="标签,逗号分隔 如 prod,web"/>
       <input id="s_desc" placeholder="描述(可选)"/>
       <button class="btn" id="s_saveBtn" onclick="saveServer()">保存</button>
@@ -164,6 +167,22 @@
       <small id="s_editHint" style="display:none"> · 编辑中,密码/私钥留空表示保持不变</small>
     </div>
     <div id="serverList"></div>
+  </section>
+
+  <!-- SSH 秘钥 -->
+  <section class="panel" id="sshkeys">
+    <div class="card">
+      <h3>新增 SSH 秘钥</h3>
+      <input id="k_name" placeholder="名称 如 prod-deploy"/>
+      <textarea id="k_key" rows="4" placeholder="私钥内容(-----BEGIN ... -----END ...)"></textarea>
+      <div class="row">
+        <input id="k_pass" placeholder="passphrase(可空)"/>
+        <input id="k_desc" placeholder="描述(可选)"/>
+      </div>
+      <button class="btn" onclick="addSSHKey()">保存秘钥</button>
+      <small> · 保存后可在"服务器"表单里直接选用,无需重复粘贴私钥</small>
+    </div>
+    <div id="sshKeyList"></div>
   </section>
 
   <!-- 云账号 -->
@@ -222,7 +241,8 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   b.classList.add('active'); $(b.dataset.tab).classList.add('active');
   if(b.dataset.tab==='chat'){ loadConversations(); loadTargets(); }
   if(b.dataset.tab==='models') loadModels();
-  if(b.dataset.tab==='servers') loadServers();
+  if(b.dataset.tab==='servers'){ loadServers(); loadKeyOptions(); }
+  if(b.dataset.tab==='sshkeys') loadSSHKeys();
   if(b.dataset.tab==='clouds') loadClouds();
   if(b.dataset.tab==='audits') loadAudits();
 });
@@ -231,6 +251,10 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 const LV={readonly:'只读',mutating:'变更',dangerous:'危险'};
 function el(html){ const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; }
 function scroll(){ const m=$('messages'); m.scrollTop=m.scrollHeight; }
+// ssh/工具执行结果默认折叠(点击展开)
+function toolResultHtml(name, output, skip){
+  return `<details class="toolblk ${skip?'skipped':''}"><summary>↳ 结果 <small>${esc(name||'')}</small>${skip?' <small>(已跳过)</small>':''}</summary><pre>${esc(output||'')}</pre></details>`;
+}
 function addMsg(role, text){ const d=document.createElement('div'); d.className='msg '+(role==='user'?'user':'bot');
   d.innerHTML='<b>'+(role==='user'?'你':'Agent')+'</b><div class="body"></div>'; d.querySelector('.body').textContent=text||'';
   $('messages').appendChild(d); scroll(); return d.querySelector('.body'); }
@@ -253,12 +277,13 @@ async function endTask(){
 function handleEvent(ev, ctx){
   if(ev.type==='thread'){ threadId=ev.thread_id; $('threadLabel').textContent='thread: '+threadId; }
   else if(ev.type==='token'){ if(!ctx.bot){ ctx.bot=addMsg('bot',''); ctx.bot.classList.add('cursor'); } ctx.bot.textContent+=ev.text; setStatus('模型回复中…','run'); scroll(); }
-  else if(ev.type==='tool_call'){ const lv=ev.level||''; const cmd=(ev.args&&ev.args.command)||ev.name; setStatus('指令执行中…','run');
-      $('messages').appendChild(el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span><br><code>${esc(cmd)}</code></div>`)); scroll(); }
+  else if(ev.type==='tool_call'){ const lv=ev.level||''; const cmd=(ev.args&&ev.args.command)||ev.name; const intent=(ev.args&&ev.args.intent)||''; setStatus('指令执行中…','run');
+      $('messages').appendChild(el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span>${intent?'<br><small>📝 '+esc(intent)+'</small>':''}<br><code>${esc(cmd)}</code></div>`)); scroll(); }
   else if(ev.type==='tool_result'){ const skip=(ev.output||'').startsWith('[已跳过]'); setStatus('处理执行结果…','run');
-      $('messages').appendChild(el(`<div class="toolblk ${skip?'skipped':''}">↳ 结果 <small>${esc(ev.name||'')}</small><pre>${esc(ev.output||'')}</pre></div>`)); scroll(); }
+      $('messages').appendChild(el(toolResultHtml(ev.name, ev.output, skip))); scroll(); }
   else if(ev.type==='llm_io'){ if($('dbgToggle').checked) renderLlmIo(ev); }
   else if(ev.type==='approval_required'){ if(ctx.bot) ctx.bot.classList.remove('cursor'); setStatus('等待确认','wait'); renderApproval(ev); }
+  else if(ev.type==='clarify_required'){ if(ctx.bot) ctx.bot.classList.remove('cursor'); setStatus('等待澄清','wait'); renderClarify(ev); }
   else if(ev.type==='done'){ if(ctx.bot) ctx.bot.classList.remove('cursor'); setStatus('已完成','done'); }
   else if(ev.type==='error'){ addMsg('bot','⚠️ 出错:'+ev.error); setStatus('出错','error'); }
 }
@@ -268,11 +293,30 @@ function renderApproval(a){
   let h='<div class="approval"><b>⚠️ 以下命令需确认后执行</b>';
   ops.forEach(op=>{ const lv=op.level||'';
     h+=`<div class="op"><span class="pill ${lv}">${LV[lv]||lv}</span><code>${esc(op.summary)}</code>
+        ${op.intent?'<small>📝 '+esc(op.intent)+'</small>':''}
         <button class="btn" onclick="approve('selected',['${op.id}'])">执行此条</button></div>`; });
   h+=`<label style="display:block;margin-top:8px"><input type="checkbox" id="rememberChk" style="width:auto"/> 本次批准的命令<b>下次不再确认,直接执行</b></label>
       <div style="margin-top:8px"><button class="btn" onclick="approve('all',[])">全部执行</button>
       <button class="btn danger" onclick="approve('reject',[])">全部拒绝</button></div></div>`;
   $('approvalBox').innerHTML=h;
+}
+
+// clarify:模型在任务不明确时发起的提问,展示选项让用户选(也可自行补充)
+let clarifyOpts=[];
+function renderClarify(c){
+  clarifyOpts = c.options||[];
+  let h='<div class="approval"><b>❓ 需要你确认一下</b><div style="margin:6px 0">'+esc(c.question||'')+'</div>';
+  clarifyOpts.forEach((o,i)=>{ h+=`<button class="btn" style="margin:3px" onclick="clarifyAnswer(clarifyOpts[${i}])">${esc(o)}</button>`; });
+  h+=`<div style="margin-top:8px"><input id="clarifyText" placeholder="或自行补充…" style="width:70%;display:inline-block"/>
+      <button class="btn ghost" onclick="clarifyAnswer($('clarifyText').value)">提交</button></div></div>`;
+  $('approvalBox').innerHTML=h;
+}
+async function clarifyAnswer(answer){
+  $('approvalBox').innerHTML=''; setBusy(true); setStatus('继续…','run');
+  const ctx={bot:null}; abortCtl=new AbortController();
+  try{ await streamPost('/chat/clarify',{thread_id:threadId, answer:answer||'',
+        servers:selectedServers(), clouds:selectedClouds()}, ev=>handleEvent(ev,ctx), abortCtl.signal); }
+  finally{ abortCtl=null; setBusy(false); loadConversations(); }
 }
 
 // 通用 SSE(POST + 流式读取,支持 AbortSignal 中断)
@@ -294,7 +338,8 @@ async function send(){
   addMsg('user', msg); $('input').value=''; setBusy(true); setStatus('模型回复中…','run');
   const ctx={bot:null}; abortCtl=new AbortController();
   try{ await streamPost('/chat/stream',{message:msg, thread_id:threadId,
-        servers:selectedServers(), clouds:selectedClouds()}, ev=>handleEvent(ev,ctx), abortCtl.signal); }
+        servers:selectedServers(), clouds:selectedClouds(),
+        auto_approve_all:$('autoApproveAll').checked}, ev=>handleEvent(ev,ctx), abortCtl.signal); }
   finally{ abortCtl=null; setBusy(false); loadConversations(); }
 }
 async function approve(action, ids){
@@ -350,7 +395,7 @@ async function openConversation(tid){
   $('messages').innerHTML='';
   c.messages.forEach(m=>{
     if(m.role==='tool'){ const skip=(m.content||'').startsWith('[已跳过]');
-      $('messages').appendChild(el(`<div class="toolblk ${skip?'skipped':''}">↳ ${esc(m.tool_name||'结果')}<pre>${esc(m.content)}</pre></div>`)); }
+      $('messages').appendChild(el(toolResultHtml(m.tool_name||'结果', m.content, skip))); }
     else addMsg(m.role==='user'?'user':'bot', m.content);
   });
   document.querySelectorAll('.histList-item').forEach(x=>x.classList.remove('active'));
@@ -367,7 +412,7 @@ async function delConversation(tid){
 $('input').addEventListener('keydown', e=>{
   if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); send(); }
 });
-loadConversations(); loadTargets();
+loadConversations(); loadTargets(); onAuthChange();
 
 // ---- 模型 ----
 async function addModel(){
@@ -385,7 +430,23 @@ function serverPayload(){
   return {name:$('s_name').value, host:$('s_host').value, port:+$('s_port').value||22,
     username:$('s_user').value, auth_type:$('s_auth').value, password:$('s_pass').value||null,
     private_key:$('s_key').value||null, description:$('s_desc').value||null,
+    ssh_key_id: $('s_key_sel').value ? +$('s_key_sel').value : null,
     tags:$('s_tags').value.split(',').map(x=>x.trim()).filter(Boolean)};
+}
+// auth=key 时显示秘钥选择/粘贴框
+function onAuthChange(){
+  const isKey = $('s_auth').value==='key';
+  $('s_key_sel').style.display = isKey ? '' : 'none';
+  $('s_key').style.display = isKey ? '' : 'none';
+  $('s_pass').style.display = isKey ? 'none' : '';
+}
+// 把已保存的 SSH 秘钥填进服务器表单的下拉
+async function loadKeyOptions(){
+  let keys=[]; try{ keys=await api('/admin/ssh-keys'); }catch(e){}
+  const cur=$('s_key_sel').value;
+  $('s_key_sel').innerHTML='<option value="">— 选择已保存的秘钥(或在下方粘贴)—</option>'
+    + keys.map(k=>`<option value="${k.id}">${esc(k.name)}</option>`).join('');
+  $('s_key_sel').value=cur;
 }
 async function saveServer(){
   const p=serverPayload();
@@ -397,22 +458,26 @@ async function saveServer(){
 function resetServerForm(){
   editingServerId=null;
   ['s_name','s_host','s_user','s_pass','s_key','s_tags','s_desc'].forEach(id=>$(id).value='');
-  $('s_port').value='22'; $('s_auth').value='password';
-  $('s_pass').placeholder='密码'; $('s_key').placeholder='私钥(auth=key 时填)';
+  $('s_port').value='22'; $('s_auth').value='password'; $('s_key_sel').value='';
+  $('s_pass').placeholder='密码'; $('s_key').placeholder='私钥(auth=key 且未选已保存秘钥时填)';
   $('s_formTitle').textContent='新增服务器'; $('s_saveBtn').textContent='保存';
   $('s_cancelBtn').style.display='none'; $('s_editHint').style.display='none';
+  onAuthChange();
 }
 async function editServer(id){
   const s=await api('/admin/servers/'+id);
+  await loadKeyOptions();
   editingServerId=id;
   $('s_name').value=s.name; $('s_host').value=s.host; $('s_port').value=s.port;
   $('s_user').value=s.username; $('s_auth').value=s.auth_type;
+  $('s_key_sel').value = s.ssh_key_id ? String(s.ssh_key_id) : '';
   $('s_tags').value=(s.tags||[]).join(','); $('s_desc').value=s.description||'';
   $('s_pass').value=''; $('s_key').value='';
   $('s_pass').placeholder = s.has_password ? '密码(留空保持不变)' : '密码';
-  $('s_key').placeholder  = s.has_key ? '私钥(留空保持不变)' : '私钥(auth=key 时填)';
+  $('s_key').placeholder  = s.has_key ? '私钥(留空保持不变)' : '私钥(auth=key 且未选已保存秘钥时填)';
   $('s_formTitle').textContent='编辑服务器 #'+id; $('s_saveBtn').textContent='更新';
   $('s_cancelBtn').style.display='inline-block'; $('s_editHint').style.display='inline';
+  onAuthChange();
   window.scrollTo(0,0);
 }
 async function testServer(id){
@@ -429,6 +494,23 @@ async function loadServers(){ const l=await api('/admin/servers'); $('serverList
      <button class="btn danger" onclick="if(confirm('删除 ${s.name}?'))api('/admin/servers/${s.id}','DELETE').then(loadServers)">删除</button>
    </span>
    <div id="test_${s.id}"></div></div>`).join(''); }
+
+// ---- SSH 秘钥 ----
+async function addSSHKey(){
+  if(!$('k_name').value || !$('k_key').value) return alert('名称与私钥必填');
+  await api('/admin/ssh-keys','POST',{name:$('k_name').value, private_key:$('k_key').value,
+    passphrase:$('k_pass').value||null, description:$('k_desc').value||null});
+  ['k_name','k_key','k_pass','k_desc'].forEach(id=>$(id).value='');
+  loadSSHKeys(); loadKeyOptions();
+}
+async function loadSSHKeys(){ const l=await api('/admin/ssh-keys'); $('sshKeyList').innerHTML=l.map(k=>
+  `<div class="card"><b>${esc(k.name)}</b> <small>${esc(k.description||'')}</small>
+   <button class="btn danger" style="float:right" onclick="delSSHKey(${k.id},'${esc(k.name)}')">删除</button></div>`).join('')
+   || '<small>暂无已保存的秘钥</small>'; }
+async function delSSHKey(id,name){
+  if(!confirm('删除秘钥 '+name+'?引用它的服务器会回退为未设置秘钥。')) return;
+  await api('/admin/ssh-keys/'+id,'DELETE'); loadSSHKeys(); loadKeyOptions();
+}
 
 // ---- 云账号 ----
 let editingCloudId = null;
