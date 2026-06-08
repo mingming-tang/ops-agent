@@ -269,7 +269,8 @@ function renderApproval(a){
   ops.forEach(op=>{ const lv=op.level||'';
     h+=`<div class="op"><span class="pill ${lv}">${LV[lv]||lv}</span><code>${esc(op.summary)}</code>
         <button class="btn" onclick="approve('selected',['${op.id}'])">执行此条</button></div>`; });
-  h+=`<div style="margin-top:8px"><button class="btn" onclick="approve('all',[])">全部执行</button>
+  h+=`<label style="display:block;margin-top:8px"><input type="checkbox" id="rememberChk" style="width:auto"/> 本次批准的命令<b>下次不再确认,直接执行</b></label>
+      <div style="margin-top:8px"><button class="btn" onclick="approve('all',[])">全部执行</button>
       <button class="btn danger" onclick="approve('reject',[])">全部拒绝</button></div></div>`;
   $('approvalBox').innerHTML=h;
 }
@@ -297,9 +298,10 @@ async function send(){
   finally{ abortCtl=null; setBusy(false); loadConversations(); }
 }
 async function approve(action, ids){
+  const remember = action!=='reject' && !!($('rememberChk')&&$('rememberChk').checked);  // 读取须在清空审批框之前
   $('approvalBox').innerHTML=''; setBusy(true); setStatus('指令执行中…','run');  // handleEvent 按需重渲染审批框
   const ctx={bot:null}; abortCtl=new AbortController();
-  try{ await streamPost('/chat/approve',{thread_id:threadId, action, ids,
+  try{ await streamPost('/chat/approve',{thread_id:threadId, action, ids, remember,
         servers:selectedServers(), clouds:selectedClouds()}, ev=>handleEvent(ev,ctx), abortCtl.signal); }
   finally{ abortCtl=null; setBusy(false); loadConversations(); }
 }

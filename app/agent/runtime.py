@@ -179,10 +179,11 @@ async def astream_turn(thread_id: str, user_message: str,
 
 
 async def astream_resume(thread_id: str, action: str, ids: list[str],
+                         remember: bool = False,
                          servers: list[str] | None = None,
                          clouds: list[str] | None = None) -> AsyncIterator[dict]:
     agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
-    cmd = Command(resume={"action": action, "ids": ids or []})
+    cmd = Command(resume={"action": action, "ids": ids or [], "remember": remember})
     async for ev in _run_stream(agent, cmd, config, thread_id):
         yield ev

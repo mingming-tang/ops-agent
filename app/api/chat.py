@@ -26,6 +26,7 @@ class ApproveIn(BaseModel):
     thread_id: str
     action: str = "all"            # all | selected | reject
     ids: list[str] = []
+    remember: bool = False         # 勾选后:本次批准的命令下次不再确认,直接执行
     servers: list[str] = []
     clouds: list[str] = []
 
@@ -52,7 +53,8 @@ async def chat_stream(body: ChatIn):
 
 @router.post("/approve")
 async def approve(body: ApproveIn):
-    return _sse(astream_resume(body.thread_id, body.action, body.ids, body.servers, body.clouds))
+    return _sse(astream_resume(body.thread_id, body.action, body.ids, body.remember,
+                               body.servers, body.clouds))
 
 
 # ---------------- 历史记录 ----------------

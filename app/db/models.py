@@ -124,6 +124,15 @@ class Message(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AutoApproveRule(Base):
+    """用户在审批时勾选"下次不再确认"后记住的命令(精确文本匹配),自动放行。"""
+    __tablename__ = "auto_approve_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    command: Mapped[str] = mapped_column(Text)                 # 精确命令文本(已 strip)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AuditLog(Base):
     """每一次工具执行(SSH/云操作)都留痕,可回放、可追责。"""
     __tablename__ = "audit_logs"

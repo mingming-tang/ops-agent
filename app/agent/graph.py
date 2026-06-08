@@ -18,7 +18,13 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from app.agent.guardrails import classify_tool_call, needs_approval
+from app.agent.guardrails import (
+    classify_command_llm,
+    classify_tool_call,
+    is_auto_approved,
+    needs_approval,
+    remember_auto_approve,
+)
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.config import get_settings
@@ -45,15 +51,24 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
                             "response": _render_response(response)}}
 
     # -- 节点:护栏 + 逐条审批 --
-    def guardrail_node(state: AgentState) -> dict:
+    async def guardrail_node(state: AgentState) -> dict:
         last: AIMessage = state["messages"][-1]
         pending = []          # 需用户确认的命令(变更 / 危险)
-        auto_ids = []         # 无需确认直接执行的(只读命令、list_servers 等本地工具)
+        auto_ids = []         # 无需确认直接执行的(只读命令、白名单、list_servers 等本地工具)
         for tc in last.tool_calls:
             if not needs_approval(tc["name"]):
                 auto_ids.append(tc["id"])          # 本地只读工具
                 continue
-            level, summary = classify_tool_call(tc["name"], tc["args"])
+            if tc["name"] == "ssh_run":
+                cmd = tc["args"].get("command", "")
+                if is_auto_approved(cmd):          # 用户此前选过"下次不再确认"
+                    auto_ids.append(tc["id"])
+                    continue
+                # 是否只读交给大模型判断;只读直接执行,否则需人工确认
+                level = await classify_command_llm(cmd, model)
+                summary = f"在服务器 [{tc['args'].get('server_name')}] 执行:{cmd}"
+            else:
+                level, summary = classify_tool_call(tc["name"], tc["args"])
             if level == CommandLevel.readonly:
                 auto_ids.append(tc["id"])          # 只读命令:直接执行,无需确认
             else:
@@ -64,7 +79,7 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
         if not pending or not settings.require_command_approval:
             return {"approved_ids": [tc["id"] for tc in last.tool_calls]}
 
-        # 挂起等待用户确认。resume 传回 {"action": "all|selected|reject", "ids": [...]}
+        # 挂起等待用户确认。resume 传回 {"action": "all|selected|reject", "ids": [...], "remember": bool}
         decision = interrupt({"type": "approval_required", "operations": pending,
                               "message": "以下命令需要确认后才会执行"}) or {}
         action = decision.get("action", "reject")
@@ -74,6 +89,12 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
             approved = [i for i in decision.get("ids", []) if i in {op["id"] for op in pending}]
         else:  # reject
             approved = []
+        # "下次不再确认":把本次批准且为 ssh 命令的指令写入白名单,后续同命令自动放行
+        if decision.get("remember"):
+            approved_set = set(approved)
+            for op in pending:
+                if op["id"] in approved_set and op["name"] == "ssh_run" and op.get("command"):
+                    remember_auto_approve(op["command"])
         return {"approved_ids": auto_ids + approved}
 
     # -- 节点:执行工具 + 审计(只执行已批准的,其余跳过)--

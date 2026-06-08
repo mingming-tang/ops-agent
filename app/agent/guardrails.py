@@ -10,7 +10,10 @@
 """
 import re
 
-from app.db.models import CommandLevel
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.db.base import SessionLocal
+from app.db.models import AutoApproveRule, CommandLevel
 
 # 危险:不可逆、可能造成数据/可用性损失
 _DANGEROUS = [
@@ -52,6 +55,51 @@ def classify_command(command: str) -> CommandLevel:
         if re.search(pat, cmd):
             return CommandLevel.mutating
     return CommandLevel.readonly
+
+
+_LLM_CLASSIFY_SYSTEM = SystemMessage(content=(
+    "你是 Linux 运维命令风险分级器。判断给定 shell 命令的风险级别,只回复一个英文单词:\n"
+    "- readonly:纯查询/只读,不修改任何状态(如 ls、cat、df、ps、grep、top、systemctl status、tail)\n"
+    "- mutating:会产生副作用但通常可控/可回滚(如 systemctl restart、apt install、写文件、sed -i)\n"
+    "- dangerous:高危/不可逆/可能造成数据或可用性损失(如 rm -rf、mkfs、dd、drop table、关闭防火墙、重启关机)\n"
+    "注意:含管道、重定向、&&、子命令时,按其中风险最高的部分判定。\n"
+    "只输出 readonly、mutating、dangerous 三者之一,不要任何解释或标点。"
+))
+
+
+async def classify_command_llm(command: str, model) -> CommandLevel:
+    """问大模型判断命令风险级别;调用失败时回退到规则判定 classify_command。"""
+    if not command.strip():
+        return CommandLevel.readonly
+    try:
+        resp = await model.ainvoke([_LLM_CLASSIFY_SYSTEM, HumanMessage(content=command)])
+        text = (resp.content if isinstance(resp.content, str) else str(resp.content)).lower()
+        # 优先匹配高风险词,避免"不是 dangerous,是 readonly"这类措辞误判
+        for level in (CommandLevel.dangerous, CommandLevel.mutating, CommandLevel.readonly):
+            if level.value in text:
+                return level
+    except Exception:  # noqa: BLE001  模型不可用/超时等,降级到规则
+        pass
+    return classify_command(command)
+
+
+# ---- "下次不再确认"免审批白名单(精确命令文本,持久化到 DB) ----
+def is_auto_approved(command: str) -> bool:
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    with SessionLocal() as db:
+        return db.query(AutoApproveRule).filter(AutoApproveRule.command == cmd).first() is not None
+
+
+def remember_auto_approve(command: str) -> None:
+    cmd = (command or "").strip()
+    if not cmd:
+        return
+    with SessionLocal() as db:
+        if db.query(AutoApproveRule).filter(AutoApproveRule.command == cmd).first() is None:
+            db.add(AutoApproveRule(command=cmd))
+            db.commit()
 
 
 def classify_cloud_tool(tool_name: str) -> CommandLevel:
