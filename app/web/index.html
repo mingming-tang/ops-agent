@@ -56,9 +56,10 @@
   .chatLayout { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
   .convCol { min-width: 0; }   /* 会话 + 终端竖向堆叠,宽度收敛防止 xterm 撑破 */
   .histPane { position: sticky; top: 12px; }
-  .histList-item { padding: 8px 10px; margin-top: 6px; border: 1px solid var(--card-border); border-radius: 8px; background: var(--card-bg); cursor: pointer; font-size: 13px; }
+  .histList-item { position: relative; padding: 8px 28px 8px 10px; margin-top: 6px; border: 1px solid var(--card-border); border-radius: 8px; background: var(--card-bg); cursor: pointer; font-size: 13px; overflow: hidden; }
   .histList-item.active { border-color: var(--primary); }
-  .histList-item .x { float: right; color: var(--muted); cursor: pointer; }
+  .histList-item .x { position: absolute; top: 7px; right: 9px; color: var(--muted); cursor: pointer; }
+  .histTitle { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; overflow-wrap: anywhere; }
   .convPane { min-height: 60vh; }
   /* 流式工具块 */
   .toolblk { border-left: 3px solid var(--primary); padding: 6px 10px; margin: 6px 0; background: var(--pre-bg); border-radius: 0 8px 8px 0; font-size: 13px; }
@@ -96,11 +97,34 @@
   .termTab.active .x { color: #bbb; }
   .termHint { color: var(--muted); font-size: 12px; padding: 6px 0; }
   .termPane { height: 340px; background: #000; border-radius: 0 8px 8px 8px; padding: 6px; overflow: hidden; }
+  .termPane.light { background: #ffffff; }
   .termPane .xterm { height: 100%; }
+  /* 终端全屏 */
+  #terminalCard:fullscreen { background: var(--card-bg); padding: 14px; overflow: auto; }
+  #terminalCard:fullscreen .termPane { height: calc(100vh - 130px); }
   /* 登录遮罩 */
   #loginOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2000; display: none; align-items: center; justify-content: center; }
   #loginOverlay .card { width: 320px; }
   #loginErr { color: var(--danger); font-size: 13px; min-height: 18px; }
+  /* ===== 手机端适配 ===== */
+  @media (max-width: 768px) {
+    header { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
+    header strong { font-size: 15px; }
+    nav { padding: 8px 10px; flex-wrap: wrap; }
+    nav button { padding: 6px 10px; font-size: 13px; }
+    main { padding: 12px; }
+    /* 两栏改单栏:历史在上(可滚动)、会话在下 */
+    .chatLayout { grid-template-columns: 1fr; gap: 10px; }
+    .histPane { position: static; }
+    #histList { max-height: 30vh; overflow-y: auto; }
+    .convPane { min-height: 50vh; }
+    #messages { max-height: 52vh; }
+    .row { grid-template-columns: 1fr; }
+    .termPane { height: 300px; }
+    .termBar select { min-width: 0; flex: 1 1 120px; }
+    /* 16px 以上避免 iOS 聚焦时自动放大 */
+    textarea, input, select { font-size: 16px; }
+  }
 </style>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css"/>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -167,6 +191,8 @@
           <b>🖥️ 终端</b>
           <select id="termServer"><option value="">选择服务器…</option></select>
           <button class="btn" onclick="openTerminal()">+ 新建终端</button>
+          <button class="btn ghost" id="termThemeBtn" onclick="toggleTermTheme()">☀️ 浅色</button>
+          <button class="btn ghost" onclick="toggleTermFullscreen()">⛶ 全屏</button>
           <small>可同时连多台,点 Tab 切换</small>
         </div>
         <div id="termTabs"></div>
@@ -324,7 +350,7 @@ function toolResultHtml(name, output, skip){
 function addMsg(role, text){ const d=document.createElement('div'); d.className='msg '+(role==='user'?'user':'bot');
   d.innerHTML='<b>'+(role==='user'?'你':'Agent')+'</b><div class="body"></div>'; d.querySelector('.body').textContent=text||'';
   $('messages').appendChild(d); scroll(); return d.querySelector('.body'); }
-function newThread(){ threadId=null; $('messages').innerHTML=''; $('approvalBox').innerHTML=''; $('debugPane').innerHTML=''; dbgCount=0; $('threadLabel').textContent='新会话'; setStatus('');
+function newThread(){ threadId=null; localStorage.removeItem('threadId'); $('messages').innerHTML=''; $('approvalBox').innerHTML=''; $('debugPane').innerHTML=''; dbgCount=0; $('threadLabel').textContent='新会话'; setStatus('');
   document.querySelectorAll('.histList-item').forEach(x=>x.classList.remove('active')); }
 function setBusy(b){ $('sendBtn').disabled=b; $('input').disabled=b; $('abortBtn').style.display=b?'inline-block':'none'; }
 function setStatus(text, kind){ const s=$('statusBar'); if(!text){ s.className='statusBar'; s.innerHTML=''; return; }
@@ -341,7 +367,7 @@ async function endTask(){
 
 // 把一个 SSE 事件渲染到界面;bot 为当前 Agent 气泡的 body 元素(随 token 增长)
 function handleEvent(ev, ctx){
-  if(ev.type==='thread'){ threadId=ev.thread_id; $('threadLabel').textContent='thread: '+threadId; }
+  if(ev.type==='thread'){ threadId=ev.thread_id; localStorage.setItem('threadId',threadId); $('threadLabel').textContent='thread: '+threadId; }
   else if(ev.type==='token'){ if(!ctx.bot){ ctx.bot=addMsg('bot',''); ctx.bot.classList.add('cursor'); } ctx.bot.textContent+=ev.text; setStatus('模型回复中…','run'); scroll(); }
   else if(ev.type==='tool_call'){ const lv=ev.level||''; const cmd=(ev.args&&ev.args.command)||ev.name; const intent=(ev.args&&ev.args.intent)||''; setStatus('指令执行中…','run');
       $('messages').appendChild(el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span>${intent?'<br><small>📝 '+esc(intent)+'</small>':''}<br><code>${esc(cmd)}</code></div>`)); scroll(); }
@@ -436,66 +462,112 @@ async function loadTargets(){
 const selectedServers = () => [...document.querySelectorAll('.svchk:checked')].map(x=>x.value);
 const selectedClouds  = () => [...document.querySelectorAll('.clchk:checked')].map(x=>x.value);
 
-// ---- 交互式终端(xterm.js + WebSocket,多 Tab)----
-let termSessions={};      // id -> {id, server, term, fit, ws, status}
-let activeTermId=null, termSeq=0;
+// ---- 交互式终端(xterm.js + WebSocket,多 Tab,会话常驻可跨刷新)----
+let termSessions={};      // sid -> {sid, server, term, fit, ws, status}
+let activeTermId=null;
 const TERM_DOT={connecting:'🟡', on:'🟢', err:'🔴', off:'⚪'};
+// 终端主题(亮/暗),偏好记忆到 localStorage
+const TERM_THEMES={
+  dark:  {background:'#000000', foreground:'#e6e6e6', cursor:'#e6e6e6', selectionBackground:'#33467c'},
+  light: {background:'#ffffff', foreground:'#1f2329', cursor:'#1f2329', selectionBackground:'#cfe3ff'},
+};
+let termTheme=localStorage.getItem('termTheme')||'dark';
+function applyTermPaneStyle(pane){ pane.classList.toggle('light', termTheme==='light'); }
+function termThemeLabel(){ return termTheme==='dark' ? '☀️ 浅色' : '🌙 深色'; }  // 显示"将切换到"的目标
+function toggleTermTheme(){
+  termTheme = termTheme==='dark' ? 'light' : 'dark';
+  localStorage.setItem('termTheme', termTheme);
+  $('termThemeBtn').textContent = termThemeLabel();
+  Object.values(termSessions).forEach(s=>{ s.term.options.theme=TERM_THEMES[termTheme];
+    const p=$('termPane_'+s.sid); if(p) applyTermPaneStyle(p); });
+}
+function toggleTermFullscreen(){
+  const el=$('terminalCard');
+  if(document.fullscreenElement) document.exitFullscreen?.();
+  else el.requestFullscreen?.();
+}
+document.addEventListener('fullscreenchange', ()=>{ const s=termSessions[activeTermId];
+  if(s) setTimeout(()=>{ try{ s.fit.fit(); sendTermResize(s); }catch(e){} }, 80); });
 
-function openTerminal(){
+// 打开的终端会话(sid+server)记到 localStorage,刷新后据此恢复
+function saveTermTabs(){
+  localStorage.setItem('termTabs', JSON.stringify(Object.values(termSessions).map(s=>({sid:s.sid, server:s.server}))));
+}
+async function openTerminal(){
   const server=$('termServer').value;
   if(!server) return alert('请先选择服务器');
   if(typeof Terminal==='undefined') return alert('终端组件(xterm.js)未加载,请检查网络/CDN');
-  const id='t'+(++termSeq);
-  const pane=document.createElement('div'); pane.className='termPane'; pane.id='termPane_'+id;
-  $('termPanes').appendChild(pane);
-  const term=new Terminal({cursorBlink:true, fontSize:13, fontFamily:'Menlo, Consolas, monospace', theme:{background:'#000000'}});
+  let r; try{ r=await api('/chat/terminal/open?server='+encodeURIComponent(server),'POST'); }catch(e){ return; }
+  buildTermTab(r.session_id, server, true); saveTermTabs();
+}
+// 创建一个终端 Tab 并连上服务端会话(新建或刷新恢复都走这里)
+function buildTermTab(sid, server, focus){
+  if(termSessions[sid]){ activateTerm(sid); return; }
+  const pane=document.createElement('div'); pane.className='termPane'; pane.id='termPane_'+sid;
+  applyTermPaneStyle(pane); $('termPanes').appendChild(pane);
+  const term=new Terminal({cursorBlink:true, fontSize:13, fontFamily:'Menlo, Consolas, monospace', theme:TERM_THEMES[termTheme]});
   const fit=new FitAddon.FitAddon(); term.loadAddon(fit); term.open(pane);
-  const sess={id, server, term, fit, ws:null, status:'connecting'};
-  termSessions[id]=sess;
-  activateTerm(id);
+  const sess={sid, server, term, fit, ws:null, status:'connecting'};
+  termSessions[sid]=sess;
+  term.onData(d=>{ if(sess.ws&&sess.ws.readyState===1) sess.ws.send(JSON.stringify({type:'input',data:d})); });
+  term.onResize(()=>sendTermResize(sess));
+  if(focus) activateTerm(sid);
+  connectTermWs(sess);
+  renderTermTabs();
+}
+function connectTermWs(sess){
   const proto=location.protocol==='https:'?'wss':'ws';
-  const ws=new WebSocket(`${proto}://${location.host}/chat/terminal?server=${encodeURIComponent(server)}`);
+  const ws=new WebSocket(`${proto}://${location.host}/chat/terminal?session=${encodeURIComponent(sess.sid)}`);
   ws.binaryType='arraybuffer'; sess.ws=ws;
   ws.onmessage=ev=>{
     if(typeof ev.data==='string'){ const m=JSON.parse(ev.data);
       if(m.type==='ready'){ sess.status='on'; renderTermTabs(); sendTermResize(sess); }
-      else if(m.type==='error'){ term.write('\r\n\x1b[31m[错误] '+m.error+'\x1b[0m\r\n'); sess.status='err'; renderTermTabs(); }
-      else if(m.type==='exit'){ term.write('\r\n\x1b[33m[会话已结束]\x1b[0m\r\n'); sess.status='off'; renderTermTabs(); }
-    } else term.write(new Uint8Array(ev.data));
+      else if(m.type==='error'){ sess.term.write('\r\n\x1b[31m[错误] '+m.error+'\x1b[0m\r\n'); sess.status='err'; renderTermTabs(); }
+      else if(m.type==='exit'){ sess.term.write('\r\n\x1b[33m[会话已结束]\x1b[0m\r\n'); sess.status='off'; renderTermTabs(); }
+    } else sess.term.write(new Uint8Array(ev.data));
   };
   ws.onclose=()=>{ if(sess.status!=='err'&&sess.status!=='off') sess.status='off'; renderTermTabs(); };
   ws.onerror=()=>{ sess.status='err'; renderTermTabs(); };
-  term.onData(d=>{ if(ws.readyState===1) ws.send(JSON.stringify({type:'input',data:d})); });
-  term.onResize(()=>sendTermResize(sess));
-  renderTermTabs();
 }
 function sendTermResize(sess){ if(sess&&sess.ws&&sess.ws.readyState===1)
   sess.ws.send(JSON.stringify({type:'resize',cols:sess.term.cols,rows:sess.term.rows})); }
-function activateTerm(id){
-  activeTermId=id;
-  Object.values(termSessions).forEach(s=>{ const p=$('termPane_'+s.id); if(p) p.style.display=(s.id===id?'block':'none'); });
+function activateTerm(sid){
+  activeTermId=sid;
+  Object.values(termSessions).forEach(s=>{ const p=$('termPane_'+s.sid); if(p) p.style.display=(s.sid===sid?'block':'none'); });
   renderTermTabs();
-  const s=termSessions[id];
+  const s=termSessions[sid];
   if(s) setTimeout(()=>{ try{ s.fit.fit(); sendTermResize(s); s.term.focus(); }catch(e){} }, 30);
 }
-function closeTerm(id, ev){
+async function closeTerm(sid, ev){
   if(ev) ev.stopPropagation();
-  const s=termSessions[id]; if(!s) return;
+  const s=termSessions[sid]; if(!s) return;
   try{ s.ws&&s.ws.close(); }catch(e){}
   try{ s.term.dispose(); }catch(e){}
-  const p=$('termPane_'+id); if(p) p.remove();
-  delete termSessions[id];
-  if(activeTermId===id){ const rest=Object.keys(termSessions); activeTermId=rest.length?rest[rest.length-1]:null;
+  const p=$('termPane_'+sid); if(p) p.remove();
+  delete termSessions[sid];
+  try{ await fetch('/chat/terminal/'+sid,{method:'DELETE'}); }catch(e){}   // 显式关闭则销毁服务端会话
+  saveTermTabs();
+  if(activeTermId===sid){ const rest=Object.keys(termSessions); activeTermId=rest.length?rest[rest.length-1]:null;
     if(activeTermId) activateTerm(activeTermId); }
   renderTermTabs();
 }
 function renderTermTabs(){
   const ids=Object.keys(termSessions);
   $('termTabs').innerHTML = ids.length
-    ? ids.map(id=>{ const s=termSessions[id];
-        return `<div class="termTab ${id===activeTermId?'active':''}" onclick="activateTerm('${id}')">${TERM_DOT[s.status]||'⚪'} ${esc(s.server)} <span class="x" onclick="closeTerm('${id}',event)">✕</span></div>`;
+    ? ids.map(sid=>{ const s=termSessions[sid];
+        return `<div class="termTab ${sid===activeTermId?'active':''}" onclick="activateTerm('${sid}')">${TERM_DOT[s.status]||'⚪'} ${esc(s.server)} <span class="x" onclick="closeTerm('${sid}',event)">✕</span></div>`;
       }).join('')
     : '<div class="termHint">还没有终端,选择服务器后点"+ 新建终端"</div>';
+}
+// 刷新后:只恢复服务端仍存活的会话(回放历史输出)
+async function restoreTerminals(){
+  let saved=[]; try{ saved=JSON.parse(localStorage.getItem('termTabs')||'[]'); }catch(e){}
+  if(!saved.length || typeof Terminal==='undefined') return;
+  let alive=[]; try{ alive=await api('/chat/terminal/sessions'); }catch(e){ return; }
+  const aliveSet=new Set(alive.map(a=>a.id));
+  const keep=saved.filter(t=>aliveSet.has(t.sid));
+  keep.forEach((t,i)=>buildTermTab(t.sid, t.server, i===0));
+  saveTermTabs();   // 清掉已失效的
 }
 window.addEventListener('resize', ()=>{ const s=termSessions[activeTermId]; if(s){ try{ s.fit.fit(); sendTermResize(s); }catch(e){} } });
 
@@ -522,11 +594,11 @@ async function loadConversations(){
   const l=await api('/chat/conversations');
   $('histList').innerHTML=l.map(c=>`<div class="histList-item ${c.thread_id===threadId?'active':''}" onclick="openConversation('${c.thread_id}')">
      <span class="x" onclick="event.stopPropagation();delConversation('${c.thread_id}')">✕</span>
-     ${esc(c.title||'(无标题)')}<br><small>${c.status} · ${c.created_at.slice(5,16)}</small></div>`).join('');
+     <div class="histTitle">${esc(c.title||'(无标题)')}</div><small>${c.status} · ${c.created_at.slice(5,16)}</small></div>`).join('');
 }
 async function openConversation(tid){
   const c=await api('/chat/conversations/'+tid);
-  threadId=tid; $('approvalBox').innerHTML=''; $('debugPane').innerHTML=''; dbgCount=0; $('threadLabel').textContent='thread: '+tid; setStatus('');
+  threadId=tid; localStorage.setItem('threadId',tid); $('approvalBox').innerHTML=''; $('debugPane').innerHTML=''; dbgCount=0; $('threadLabel').textContent='thread: '+tid; setStatus('');
   $('messages').innerHTML='';
   c.messages.forEach(m=>{
     if(m.role==='tool'){ const skip=(m.content||'').startsWith('[已跳过]');
@@ -542,14 +614,22 @@ async function delConversation(tid){
   if(tid===threadId) newThread();
   loadConversations();
 }
+// 刷新后恢复上次打开的会话(消息在服务端,直接重新打开;已删除则清掉记忆)
+async function restoreConversation(){
+  const tid=localStorage.getItem('threadId'); if(!tid) return;
+  try{ const r=await fetch('/chat/conversations/'+tid); if(!r.ok){ localStorage.removeItem('threadId'); return; } }
+  catch(e){ return; }
+  openConversation(tid);
+}
 
 // 快捷键:⌘/Ctrl + Enter 发送
 $('input').addEventListener('keydown', e=>{
   if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); send(); }
 });
-// 登录态校验通过后再加载数据(未登录则弹登录框)
-(async ()=>{ if(await checkAuth()){ loadConversations(); loadTargets(); } })();
+// 登录态校验通过后再加载数据(未登录则弹登录框);并恢复上次会话与终端
+(async ()=>{ if(await checkAuth()){ loadConversations(); loadTargets(); restoreConversation(); restoreTerminals(); } })();
 onAuthChange();
+$('termThemeBtn').textContent=termThemeLabel();
 $('loginPass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
 
 // ---- 模型 ----
