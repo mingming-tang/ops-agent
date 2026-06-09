@@ -54,6 +54,7 @@
   #themeToggle { margin-left: auto; }
   /* 对话两栏布局 */
   .chatLayout { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
+  .convCol { min-width: 0; }   /* 会话 + 终端竖向堆叠,宽度收敛防止 xterm 撑破 */
   .histPane { position: sticky; top: 12px; }
   .histList-item { padding: 8px 10px; margin-top: 6px; border: 1px solid var(--card-border); border-radius: 8px; background: var(--card-bg); cursor: pointer; font-size: 13px; }
   .histList-item.active { border-color: var(--primary); }
@@ -67,10 +68,10 @@
   .op { margin: 6px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .op code { flex: 1; word-break: break-all; }
   /* 操作对象选择栏 */
-  .targetBar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13px; padding: 8px 0; border-top: 1px dashed var(--card-border); margin-top: 8px; }
+  .targetBar { display: flex; flex-direction: column; gap: 6px; font-size: 13px; padding: 8px 0; border-top: 1px dashed var(--card-border); margin-top: 8px; }
+  .targetRow { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .targetBar .tlabel { color: var(--muted); }
   .targetBar label { display: inline-flex; align-items: center; gap: 3px; margin-right: 8px; }
-  .targetBar .dbgLabel { margin-left: auto; }
   #serverChecks label, #cloudChecks label { background: var(--pre-bg); padding: 2px 8px; border-radius: 10px; }
   /* 调试面板 */
   .dbg { margin: 6px 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 10px; background: var(--pre-bg); font-size: 12px; }
@@ -85,12 +86,40 @@
   .statusBar.interrupted { color: var(--muted); }
   .spin { width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; display: inline-block; animation: spin 0.7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* 终端 */
+  .termBar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .termBar select { width: auto; min-width: 160px; }
+  #termTabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 0; }
+  .termTab { padding: 5px 10px; border: 1px solid var(--card-border); border-bottom: none; border-radius: 8px 8px 0 0; background: var(--pre-bg); cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .termTab.active { border-color: var(--primary); background: #000; color: #eee; }
+  .termTab .x { color: var(--muted); cursor: pointer; }
+  .termTab.active .x { color: #bbb; }
+  .termHint { color: var(--muted); font-size: 12px; padding: 6px 0; }
+  .termPane { height: 340px; background: #000; border-radius: 0 8px 8px 8px; padding: 6px; overflow: hidden; }
+  .termPane .xterm { height: 100%; }
+  /* 登录遮罩 */
+  #loginOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 2000; display: none; align-items: center; justify-content: center; }
+  #loginOverlay .card { width: 320px; }
+  #loginErr { color: var(--danger); font-size: 13px; min-height: 18px; }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css"/>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
 </head>
 <body>
+<div id="loginOverlay">
+  <div class="card">
+    <h3>登录控制台</h3>
+    <input id="loginUser" placeholder="用户名"/>
+    <input id="loginPass" type="password" placeholder="密码"/>
+    <div id="loginErr"></div>
+    <button class="btn" style="width:100%" onclick="doLogin()">登录</button>
+  </div>
+</div>
 <header>
   <strong>🛠️ 运维 Agent 控制台</strong>
   <button id="themeToggle" class="btn ghost" onclick="toggleTheme()">🌙 深色</button>
+  <button id="logoutBtn" class="btn ghost" onclick="doLogout()" style="display:none">退出</button>
 </header>
 <nav>
   <button data-tab="chat" class="active">对话</button>
@@ -108,16 +137,23 @@
         <button class="btn" style="width:100%" onclick="newThread()">+ 新会话</button>
         <div id="histList"></div>
       </aside>
+      <div class="convCol">
       <div class="card convPane">
         <div id="messages"></div>
         <div id="debugPane"></div>
         <div id="approvalBox"></div>
         <div class="targetBar">
-          <span class="tlabel">操作对象<small>(不选=全部)</small>:</span>
-          <span class="tgroup">🖥️ 服务器 <span id="serverChecks"></span></span>
-          <span class="tgroup">☁️ 云账号 <span id="cloudChecks"></span></span>
-          <label><input type="checkbox" id="autoApproveAll" style="width:auto"/> ⚡ 本会话所有命令无需确认</label>
-          <label class="dbgLabel"><input type="checkbox" id="dbgToggle" style="width:auto"/> 🐞 显示模型请求/返回</label>
+          <div class="targetRow">
+            <span class="tlabel">操作对象<small>(不选=全部)</small>:</span>
+            <span class="tgroup">🖥️ 服务器 <span id="serverChecks"></span></span>
+          </div>
+          <div class="targetRow">
+            <span class="tgroup">☁️ 云账号 <span id="cloudChecks"></span></span>
+          </div>
+          <div class="targetRow">
+            <label><input type="checkbox" id="autoApproveAll" style="width:auto"/> ⚡ 本会话所有命令无需确认</label>
+            <label><input type="checkbox" id="dbgToggle" style="width:auto"/> 🐞 显示模型请求/返回</label>
+          </div>
         </div>
         <div class="statusBar" id="statusBar"></div>
         <textarea id="input" rows="3" placeholder="例:检查 web-prod-1 的磁盘使用率,>80% 的分区列出最大的5个目录(⌘/Ctrl+Enter 发送)"></textarea>
@@ -125,6 +161,17 @@
         <button class="btn danger" id="abortBtn" onclick="abortRun()" style="display:none">⏹ 中断</button>
         <button class="btn ghost" id="endBtn" onclick="endTask()">结束任务</button>
         <small id="threadLabel"></small>
+      </div>
+      <div class="card" id="terminalCard">
+        <div class="termBar">
+          <b>🖥️ 终端</b>
+          <select id="termServer"><option value="">选择服务器…</option></select>
+          <button class="btn" onclick="openTerminal()">+ 新建终端</button>
+          <small>可同时连多台,点 Tab 切换</small>
+        </div>
+        <div id="termTabs"></div>
+        <div id="termPanes"></div>
+      </div>
       </div>
     </div>
   </section>
@@ -231,9 +278,28 @@ applyTheme(localStorage.getItem('theme') || 'light');
 let threadId = null;
 async function api(path, method='GET', body){
   const r = await fetch(path, {method, headers:{'Content-Type':'application/json'}, body: body?JSON.stringify(body):undefined});
+  if(r.status===401){ showLogin(); throw new Error(401); }
   if(!r.ok){ let m=await r.text(); try{ m=JSON.parse(m).detail||m; }catch(e){} alert('请求失败 '+r.status+': '+m); throw new Error(r.status); }
   return r.json();
 }
+
+// ---- 登录认证(单用户)----
+function showLogin(){ $('loginOverlay').style.display='flex'; setTimeout(()=>$('loginUser').focus(),50); }
+async function checkAuth(){
+  let j={authenticated:true, auth_enabled:false};
+  try{ j=await (await fetch('/auth/me')).json(); }catch(e){}
+  if(j.auth_enabled) $('logoutBtn').style.display='';
+  if(j.auth_enabled && !j.authenticated){ showLogin(); return false; }
+  return true;
+}
+async function doLogin(){
+  $('loginErr').textContent='';
+  const r=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username:$('loginUser').value, password:$('loginPass').value})});
+  if(r.ok) location.reload();
+  else $('loginErr').textContent='用户名或密码错误';
+}
+async function doLogout(){ try{ await fetch('/auth/logout',{method:'POST'}); }catch(e){} location.reload(); }
 // tabs
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));
@@ -324,6 +390,7 @@ async function streamPost(path, body, onEvent, signal){
   let r;
   try{ r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal}); }
   catch(e){ if(e.name!=='AbortError') onEvent({type:'error',error:String(e)}); return; }
+  if(r.status===401){ showLogin(); onEvent({type:'error',error:'未登录,请重新登录'}); return; }
   if(!r.ok){ onEvent({type:'error',error:'HTTP '+r.status+' '+await r.text()}); return; }
   const reader=r.body.getReader(), dec=new TextDecoder(); let buf='';
   try{
@@ -360,9 +427,77 @@ async function loadTargets(){
   $('cloudChecks').innerHTML = cls.filter(c=>c.enabled).length
     ? cls.filter(c=>c.enabled).map(c=>`<label><input type="checkbox" class="clchk" value="${esc(c.name)}" style="width:auto"/>${esc(c.name)}</label>`).join('')
     : '<small>无</small>';
+  // 终端服务器下拉(沿用已登记服务器)
+  const cur=$('termServer').value;
+  $('termServer').innerHTML = '<option value="">选择服务器…</option>'
+    + svs.map(s=>`<option value="${esc(s.name)}">${esc(s.name)} (${esc(s.username)}@${esc(s.host)})</option>`).join('');
+  $('termServer').value=cur;
 }
 const selectedServers = () => [...document.querySelectorAll('.svchk:checked')].map(x=>x.value);
 const selectedClouds  = () => [...document.querySelectorAll('.clchk:checked')].map(x=>x.value);
+
+// ---- 交互式终端(xterm.js + WebSocket,多 Tab)----
+let termSessions={};      // id -> {id, server, term, fit, ws, status}
+let activeTermId=null, termSeq=0;
+const TERM_DOT={connecting:'🟡', on:'🟢', err:'🔴', off:'⚪'};
+
+function openTerminal(){
+  const server=$('termServer').value;
+  if(!server) return alert('请先选择服务器');
+  if(typeof Terminal==='undefined') return alert('终端组件(xterm.js)未加载,请检查网络/CDN');
+  const id='t'+(++termSeq);
+  const pane=document.createElement('div'); pane.className='termPane'; pane.id='termPane_'+id;
+  $('termPanes').appendChild(pane);
+  const term=new Terminal({cursorBlink:true, fontSize:13, fontFamily:'Menlo, Consolas, monospace', theme:{background:'#000000'}});
+  const fit=new FitAddon.FitAddon(); term.loadAddon(fit); term.open(pane);
+  const sess={id, server, term, fit, ws:null, status:'connecting'};
+  termSessions[id]=sess;
+  activateTerm(id);
+  const proto=location.protocol==='https:'?'wss':'ws';
+  const ws=new WebSocket(`${proto}://${location.host}/chat/terminal?server=${encodeURIComponent(server)}`);
+  ws.binaryType='arraybuffer'; sess.ws=ws;
+  ws.onmessage=ev=>{
+    if(typeof ev.data==='string'){ const m=JSON.parse(ev.data);
+      if(m.type==='ready'){ sess.status='on'; renderTermTabs(); sendTermResize(sess); }
+      else if(m.type==='error'){ term.write('\r\n\x1b[31m[错误] '+m.error+'\x1b[0m\r\n'); sess.status='err'; renderTermTabs(); }
+      else if(m.type==='exit'){ term.write('\r\n\x1b[33m[会话已结束]\x1b[0m\r\n'); sess.status='off'; renderTermTabs(); }
+    } else term.write(new Uint8Array(ev.data));
+  };
+  ws.onclose=()=>{ if(sess.status!=='err'&&sess.status!=='off') sess.status='off'; renderTermTabs(); };
+  ws.onerror=()=>{ sess.status='err'; renderTermTabs(); };
+  term.onData(d=>{ if(ws.readyState===1) ws.send(JSON.stringify({type:'input',data:d})); });
+  term.onResize(()=>sendTermResize(sess));
+  renderTermTabs();
+}
+function sendTermResize(sess){ if(sess&&sess.ws&&sess.ws.readyState===1)
+  sess.ws.send(JSON.stringify({type:'resize',cols:sess.term.cols,rows:sess.term.rows})); }
+function activateTerm(id){
+  activeTermId=id;
+  Object.values(termSessions).forEach(s=>{ const p=$('termPane_'+s.id); if(p) p.style.display=(s.id===id?'block':'none'); });
+  renderTermTabs();
+  const s=termSessions[id];
+  if(s) setTimeout(()=>{ try{ s.fit.fit(); sendTermResize(s); s.term.focus(); }catch(e){} }, 30);
+}
+function closeTerm(id, ev){
+  if(ev) ev.stopPropagation();
+  const s=termSessions[id]; if(!s) return;
+  try{ s.ws&&s.ws.close(); }catch(e){}
+  try{ s.term.dispose(); }catch(e){}
+  const p=$('termPane_'+id); if(p) p.remove();
+  delete termSessions[id];
+  if(activeTermId===id){ const rest=Object.keys(termSessions); activeTermId=rest.length?rest[rest.length-1]:null;
+    if(activeTermId) activateTerm(activeTermId); }
+  renderTermTabs();
+}
+function renderTermTabs(){
+  const ids=Object.keys(termSessions);
+  $('termTabs').innerHTML = ids.length
+    ? ids.map(id=>{ const s=termSessions[id];
+        return `<div class="termTab ${id===activeTermId?'active':''}" onclick="activateTerm('${id}')">${TERM_DOT[s.status]||'⚪'} ${esc(s.server)} <span class="x" onclick="closeTerm('${id}',event)">✕</span></div>`;
+      }).join('')
+    : '<div class="termHint">还没有终端,选择服务器后点"+ 新建终端"</div>';
+}
+window.addEventListener('resize', ()=>{ const s=termSessions[activeTermId]; if(s){ try{ s.fit.fit(); sendTermResize(s); }catch(e){} } });
 
 // ---- 调试:模型请求/返回 ----
 let dbgCount = 0;
@@ -412,7 +547,10 @@ async function delConversation(tid){
 $('input').addEventListener('keydown', e=>{
   if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); send(); }
 });
-loadConversations(); loadTargets(); onAuthChange();
+// 登录态校验通过后再加载数据(未登录则弹登录框)
+(async ()=>{ if(await checkAuth()){ loadConversations(); loadTargets(); } })();
+onAuthChange();
+$('loginPass').addEventListener('keydown', e=>{ if(e.key==='Enter') doLogin(); });
 
 // ---- 模型 ----
 async function addModel(){

@@ -23,11 +23,15 @@ class SSHRunInput(BaseModel):
     timeout: int = Field(default=600, description="超时秒数")
 
 
-async def _run_on_server(server_name: str, command: str, intent: str = "", timeout: int = 600) -> str:
+def build_conn_kwargs(server_name: str) -> tuple[dict | None, str | None]:
+    """按服务器名构造 asyncssh.connect 的参数,返回 (kwargs, 错误信息)。
+
+    ssh_run 与交互式终端共用同一套连接/鉴权逻辑(含密钥库 ssh_key_id)。
+    """
     with SessionLocal() as db:
         server = db.query(Server).filter(Server.name == server_name).first()
         if server is None:
-            return f"[错误] 未找到服务器 '{server_name}',请先在后台登记。"
+            return None, f"未找到服务器 '{server_name}',请先在后台登记。"
         conn_kwargs: dict = {
             "host": server.host,
             "port": server.port,
@@ -40,14 +44,21 @@ async def _run_on_server(server_name: str, command: str, intent: str = "", timeo
             if server.ssh_key_id is not None:
                 sk = db.get(SSHKey, server.ssh_key_id)
                 if sk is None:
-                    return f"[错误] 服务器 '{server_name}' 引用的密钥(id={server.ssh_key_id})不存在。"
+                    return None, f"服务器 '{server_name}' 引用的密钥(id={server.ssh_key_id})不存在。"
                 key_enc, pass_enc = sk.private_key_enc, sk.passphrase_enc
-            key = decrypt(key_enc)
-            passphrase = decrypt(pass_enc)
-            conn_kwargs["client_keys"] = [asyncssh.import_private_key(key, passphrase)]
+            try:
+                conn_kwargs["client_keys"] = [asyncssh.import_private_key(decrypt(key_enc), decrypt(pass_enc))]
+            except Exception as e:  # noqa: BLE001  私钥损坏/passphrase 不对等
+                return None, f"私钥解析失败:{e}"
         else:
             conn_kwargs["password"] = decrypt(server.password_enc)
+    return conn_kwargs, None
 
+
+async def _run_on_server(server_name: str, command: str, intent: str = "", timeout: int = 600) -> str:
+    conn_kwargs, err = build_conn_kwargs(server_name)
+    if err:
+        return f"[错误] {err}"
     try:
         async with asyncssh.connect(**conn_kwargs) as conn:
             result = await asyncio.wait_for(conn.run(command, check=False), timeout=timeout)

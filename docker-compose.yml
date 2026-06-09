@@ -8,6 +8,9 @@ services:
       # 凭证加密主密钥(Fernet),必须设置。生成:
       #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?请在 .env 或环境变量里设置 Fernet 密钥}
+      # 控制台登录(单用户)。设置 AUTH_PASSWORD 即启用,留空不启用。
+      AUTH_USERNAME: ${AUTH_USERNAME:-admin}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
       # 默认用挂载卷里的 SQLite;如需 Postgres 取消下面两行注释并修改
       # DATABASE_URL: postgresql+psycopg://user:pass@db:5432/operator_agent
       # CHECKPOINT_DB_URL: postgresql://user:pass@db:5432/operator_agent
