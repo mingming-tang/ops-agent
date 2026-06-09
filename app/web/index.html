@@ -15,6 +15,8 @@
     --msg-user: #dfe9ff; --msg-bot: #e3f5e8; --approval-bg: #fff5e0; --approval-border: #e6c772;
     --readonly: #d8f0e0; --mutating: #f3eccf; --dangerous: #f6dada;
     --pill-fg: #2a2f36;
+    /* shell 语法高亮(浅色) */
+    --sh-cmd: #0b6e4f; --sh-flag: #1d4ed8; --sh-str: #b45309; --sh-var: #7c3aed; --sh-op: #be123c; --sh-cmt: #6b7280;
   }
   /* ===== dark ===== */
   [data-theme="dark"] {
@@ -26,6 +28,8 @@
     --msg-user: #1d2740; --msg-bot: #16201a; --approval-bg: #3a2a12; --approval-border: #6b4f1d;
     --readonly: #1f3a2a; --mutating: #3a341f; --dangerous: #3a1f1f;
     --pill-fg: #e6e6e6;
+    /* shell 语法高亮(深色) */
+    --sh-cmd: #4ec9b0; --sh-flag: #569cd6; --sh-str: #ce9178; --sh-var: #dcdcaa; --sh-op: #f07178; --sh-cmt: #6a9955;
   }
   * { box-sizing: border-box; }
   body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background: var(--bg); color: var(--fg); }
@@ -34,7 +38,8 @@
   nav { display: flex; gap: 6px; padding: 10px 20px; background: var(--nav-bg); }
   nav button { background: var(--nav-btn-bg); color: var(--nav-btn-fg); border: 1px solid var(--nav-btn-border); padding: 6px 14px; border-radius: 6px; cursor: pointer; }
   nav button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-  main { padding: 20px; max-width: 1000px; margin: 0 auto; }
+  /* 网页越宽,内容区越宽(对话/终端随之变宽);下限为原来的 1000px,上限 1760px */
+  main { padding: 20px; max-width: clamp(1000px, 92vw, 1760px); margin: 0 auto; }
   .panel { display: none; } .panel.active { display: block; }
   textarea, input, select { width: 100%; background: var(--input-bg); border: 1px solid var(--border); color: var(--fg); padding: 8px; border-radius: 6px; margin: 4px 0; font-family: inherit; }
   .btn { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
@@ -44,7 +49,7 @@
   pre { white-space: pre-wrap; background: var(--pre-bg); padding: 10px; border-radius: 8px; border: 1px solid var(--pre-border); }
   .msg { margin: 8px 0; padding: 10px 12px; border-radius: 8px; }
   .msg .body { white-space: pre-wrap; margin-top: 4px; }
-  #messages { max-height: 70vh; overflow-y: auto; }
+  #messages { }
   .msg.user { background: var(--msg-user); } .msg.bot { background: var(--msg-bot); }
   .approval { background: var(--approval-bg); border: 1px solid var(--approval-border); padding: 12px; border-radius: 8px; margin: 10px 0; }
   table { width: 100%; border-collapse: collapse; } td, th { border-bottom: 1px solid var(--card-border); padding: 6px; text-align: left; font-size: 13px; }
@@ -60,14 +65,28 @@
   .histList-item.active { border-color: var(--primary); }
   .histList-item .x { position: absolute; top: 7px; right: 9px; color: var(--muted); cursor: pointer; }
   .histTitle { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; overflow-wrap: anywhere; }
-  .convPane { min-height: 60vh; }
+  /* 会话卡:撑满可视高度(分辨率越高越大),消息区滚动、回复区固定在底部始终可见 */
+  .convPane { display: flex; flex-direction: column; height: calc(100vh - 140px); min-height: 60vh; }
+  .convScroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  .convFooter { flex: 0 0 auto; padding-top: 6px; }
+  #approvalBox { max-height: 38vh; overflow-y: auto; }
   /* 流式工具块 */
   .toolblk { border-left: 3px solid var(--primary); padding: 6px 10px; margin: 6px 0; background: var(--pre-bg); border-radius: 0 8px 8px 0; font-size: 13px; }
   .toolblk.skipped { border-left-color: var(--muted); opacity: .7; }
   .cursor::after { content: '▋'; animation: blink 1s step-end infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  .op { margin: 6px 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .op { margin: 8px 0; display: flex; flex-direction: column; gap: 4px; }
+  .opRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .op code { flex: 1; word-break: break-all; }
+  .op .opWhere { color: var(--muted); margin-right: 6px; }
+  .opIntent { color: var(--muted); font-size: 12px; padding-left: 2px; }
+  /* shell 语法高亮 token */
+  .sh-cmd { color: var(--sh-cmd); font-weight: 600; }
+  .sh-flag { color: var(--sh-flag); }
+  .sh-str { color: var(--sh-str); }
+  .sh-var { color: var(--sh-var); }
+  .sh-op { color: var(--sh-op); }
+  .sh-cmt { color: var(--sh-cmt); font-style: italic; }
   /* 操作对象选择栏 */
   .targetBar { display: flex; flex-direction: column; gap: 6px; font-size: 13px; padding: 8px 0; border-top: 1px dashed var(--card-border); margin-top: 8px; }
   .targetRow { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
@@ -96,7 +115,7 @@
   .termTab .x { color: var(--muted); cursor: pointer; }
   .termTab.active .x { color: #bbb; }
   .termHint { color: var(--muted); font-size: 12px; padding: 6px 0; }
-  .termPane { height: 340px; background: #000; border-radius: 0 8px 8px 8px; padding: 6px; overflow: hidden; }
+  .termPane { height: max(340px, 42vh); background: #000; border-radius: 0 8px 8px 8px; padding: 6px; overflow: hidden; }
   .termPane.light { background: #ffffff; }
   .termPane .xterm { height: 100%; }
   /* 终端全屏 */
@@ -117,8 +136,9 @@
     .chatLayout { grid-template-columns: 1fr; gap: 10px; }
     .histPane { position: static; }
     #histList { max-height: 30vh; overflow-y: auto; }
-    .convPane { min-height: 50vh; }
-    #messages { max-height: 52vh; }
+    /* 手机上不固定高度,改回随内容流动;消息区限高滚动 */
+    .convPane { height: auto; min-height: 0; }
+    .convScroll { max-height: 55vh; }
     .row { grid-template-columns: 1fr; }
     .termPane { height: 300px; }
     .termBar select { min-width: 0; flex: 1 1 120px; }
@@ -163,8 +183,11 @@
       </aside>
       <div class="convCol">
       <div class="card convPane">
-        <div id="messages"></div>
-        <div id="debugPane"></div>
+        <div class="convScroll">
+          <div id="messages"></div>
+          <div id="debugPane"></div>
+        </div>
+        <div class="convFooter">
         <div id="approvalBox"></div>
         <div class="targetBar">
           <div class="targetRow">
@@ -185,6 +208,7 @@
         <button class="btn danger" id="abortBtn" onclick="abortRun()" style="display:none">⏹ 中断</button>
         <button class="btn ghost" id="endBtn" onclick="endTask()">结束任务</button>
         <small id="threadLabel"></small>
+        </div>
       </div>
       <div class="card" id="terminalCard">
         <div class="termBar">
@@ -342,10 +366,33 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
 // ---- 对话(流式)----
 const LV={readonly:'只读',mutating:'变更',dangerous:'危险'};
 function el(html){ const d=document.createElement('div'); d.innerHTML=html; return d.firstElementChild; }
-function scroll(){ const m=$('messages'); m.scrollTop=m.scrollHeight; }
+function scroll(){ const m=document.querySelector('.convScroll'); if(m) m.scrollTop=m.scrollHeight; }
 // ssh/工具执行结果默认折叠(点击展开)
 function toolResultHtml(name, output, skip){
   return `<details class="toolblk ${skip?'skipped':''}"><summary>↳ 结果 <small>${esc(name||'')}</small>${skip?' <small>(已跳过)</small>':''}</summary><pre>${esc(output||'')}</pre></details>`;
+}
+// shell 语法高亮:把命令按 命令名/参数/选项/字符串/变量/操作符/注释 上色(输出已转义,安全)
+function shellHighlight(src){
+  const RE=/(\s+)|("(?:\\.|[^"\\])*"|'[^']*')|(\$\{[^}]*\}|\$[\w@*#?$!-]+)|(\|\||&&|>>|2>&1|[|&;()<>])|(#[^\n]*)|([A-Za-z0-9_./+:@%=,~^-]+)|(.)/g;
+  let out='', m, expectCmd=true;
+  while((m=RE.exec(src))){
+    const ws=m[1], str=m[2], v=m[3], op=m[4], cmt=m[5], word=m[6], other=m[7];
+    if(ws){ out+=esc(ws); }
+    else if(str){ out+=`<span class="sh-str">${esc(str)}</span>`; }
+    else if(v){ out+=`<span class="sh-var">${esc(v)}</span>`; }
+    else if(op){ out+=`<span class="sh-op">${esc(op)}</span>`; if(/^(\|\||&&|[|;&()])$/.test(op)) expectCmd=true; }
+    else if(cmt){ out+=`<span class="sh-cmt">${esc(cmt)}</span>`; }
+    else if(word){
+      let cls;
+      if(/^--?[A-Za-z0-9?]/.test(word)) cls='sh-flag';
+      else if(expectCmd && /^[A-Za-z_]\w*=/.test(word)) cls='sh-arg';        // 赋值,命令在其后
+      else if(expectCmd){ cls='sh-cmd'; expectCmd=false; }
+      else cls='sh-arg';
+      out+=`<span class="${cls}">${esc(word)}</span>`;
+    }
+    else if(other!==undefined){ out+=esc(other); }
+  }
+  return out;
 }
 function addMsg(role, text){ const d=document.createElement('div'); d.className='msg '+(role==='user'?'user':'bot');
   d.innerHTML='<b>'+(role==='user'?'你':'Agent')+'</b><div class="body"></div>'; d.querySelector('.body').textContent=text||'';
@@ -369,8 +416,9 @@ async function endTask(){
 function handleEvent(ev, ctx){
   if(ev.type==='thread'){ threadId=ev.thread_id; localStorage.setItem('threadId',threadId); $('threadLabel').textContent='thread: '+threadId; }
   else if(ev.type==='token'){ if(!ctx.bot){ ctx.bot=addMsg('bot',''); ctx.bot.classList.add('cursor'); } ctx.bot.textContent+=ev.text; setStatus('模型回复中…','run'); scroll(); }
-  else if(ev.type==='tool_call'){ const lv=ev.level||''; const cmd=(ev.args&&ev.args.command)||ev.name; const intent=(ev.args&&ev.args.intent)||''; setStatus('指令执行中…','run');
-      $('messages').appendChild(el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span>${intent?'<br><small>📝 '+esc(intent)+'</small>':''}<br><code>${esc(cmd)}</code></div>`)); scroll(); }
+  else if(ev.type==='tool_call'){ const lv=ev.level||''; const isCmd=!!(ev.args&&ev.args.command); const cmd=(ev.args&&ev.args.command)||ev.name; const intent=(ev.args&&ev.args.intent)||''; setStatus('指令执行中…','run');
+      const cmdHtml=isCmd?shellHighlight(cmd):esc(cmd);
+      $('messages').appendChild(el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span>${intent?'<br><small>📝 '+esc(intent)+'</small>':''}<br><code>${cmdHtml}</code></div>`)); scroll(); }
   else if(ev.type==='tool_result'){ const skip=(ev.output||'').startsWith('[已跳过]'); setStatus('处理执行结果…','run');
       $('messages').appendChild(el(toolResultHtml(ev.name, ev.output, skip))); scroll(); }
   else if(ev.type==='llm_io'){ if($('dbgToggle').checked) renderLlmIo(ev); }
@@ -384,12 +432,19 @@ function renderApproval(a){
   const ops=a.operations||[];
   let h='<div class="approval"><b>⚠️ 以下命令需确认后执行</b>';
   ops.forEach(op=>{ const lv=op.level||'';
-    h+=`<div class="op"><span class="pill ${lv}">${LV[lv]||lv}</span><code>${esc(op.summary)}</code>
-        ${op.intent?'<small>📝 '+esc(op.intent)+'</small>':''}
-        <button class="btn" onclick="approve('selected',['${op.id}'])">执行此条</button></div>`; });
-  h+=`<label style="display:block;margin-top:8px"><input type="checkbox" id="rememberChk" style="width:auto"/> 本次批准的命令<b>下次不再确认,直接执行</b></label>
-      <div style="margin-top:8px"><button class="btn" onclick="approve('all',[])">全部执行</button>
-      <button class="btn danger" onclick="approve('reject',[])">全部拒绝</button></div></div>`;
+    // 第一行:级别 + 命令(shell 高亮);第二行:命令解释
+    const server=op.args&&op.args.server_name;
+    const cmdHtml = op.command ? ((server?`<span class="opWhere">[${esc(server)}]</span>`:'')+shellHighlight(op.command)) : esc(op.summary);
+    h+=`<div class="op">
+          <div class="opRow"><span class="pill ${lv}">${LV[lv]||lv}</span><code>${cmdHtml}</code>
+            <button class="btn" onclick="approve('selected',['${op.id}'],false)">执行此条</button></div>
+          ${op.intent?`<div class="opIntent">📝 ${esc(op.intent)}</div>`:''}
+        </div>`; });
+  h+=`<div style="margin-top:8px">
+        <button class="btn" onclick="approve('all',[],false)">全部执行</button>
+        <button class="btn" onclick="approve('all',[],true)">全部执行并下次不再确认</button>
+        <button class="btn danger" onclick="approve('reject',[],false)">全部拒绝</button>
+      </div></div>`;
   $('approvalBox').innerHTML=h;
 }
 
@@ -435,8 +490,8 @@ async function send(){
         auto_approve_all:$('autoApproveAll').checked}, ev=>handleEvent(ev,ctx), abortCtl.signal); }
   finally{ abortCtl=null; setBusy(false); loadConversations(); }
 }
-async function approve(action, ids){
-  const remember = action!=='reject' && !!($('rememberChk')&&$('rememberChk').checked);  // 读取须在清空审批框之前
+async function approve(action, ids, remember){
+  remember = action!=='reject' && !!remember;
   $('approvalBox').innerHTML=''; setBusy(true); setStatus('指令执行中…','run');  // handleEvent 按需重渲染审批框
   const ctx={bot:null}; abortCtl=new AbortController();
   try{ await streamPost('/chat/approve',{thread_id:threadId, action, ids, remember,
