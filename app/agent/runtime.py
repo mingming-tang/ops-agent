@@ -184,21 +184,25 @@ async def astream_turn(thread_id: str, user_message: str,
 
 async def astream_resume(thread_id: str, action: str, ids: list[str],
                          remember: bool = False,
+                         auto_approve_all: bool = False,
                          servers: list[str] | None = None,
                          clouds: list[str] | None = None) -> AsyncIterator[dict]:
     agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
-    cmd = Command(resume={"action": action, "ids": ids or [], "remember": remember})
+    # update 让"本会话所有命令无需确认"在会话中途也能即时改写状态生效
+    cmd = Command(resume={"action": action, "ids": ids or [], "remember": remember},
+                  update={"auto_approve_all": auto_approve_all})
     async for ev in _run_stream(agent, cmd, config, thread_id):
         yield ev
 
 
 async def astream_clarify(thread_id: str, answer: str,
+                          auto_approve_all: bool = False,
                           servers: list[str] | None = None,
                           clouds: list[str] | None = None) -> AsyncIterator[dict]:
     """用户回答 clarify 后续跑:把答案作为工具结果回灌给模型。"""
     agent = await _assemble(servers, clouds)
     config = {"configurable": {"thread_id": thread_id}}
-    cmd = Command(resume={"answer": answer})
+    cmd = Command(resume={"answer": answer}, update={"auto_approve_all": auto_approve_all})
     async for ev in _run_stream(agent, cmd, config, thread_id):
         yield ev

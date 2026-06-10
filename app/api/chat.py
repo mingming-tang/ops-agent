@@ -28,6 +28,7 @@ class ApproveIn(BaseModel):
     action: str = "all"            # all | selected | reject
     ids: list[str] = []
     remember: bool = False         # 勾选后:本次批准的命令下次不再确认,直接执行
+    auto_approve_all: bool = False # 本会话所有命令无需确认(中途可改,随每次请求带上)
     servers: list[str] = []
     clouds: list[str] = []
 
@@ -35,6 +36,7 @@ class ApproveIn(BaseModel):
 class ClarifyIn(BaseModel):
     thread_id: str
     answer: str = ""               # 用户对 clarify 问题的选择/补充
+    auto_approve_all: bool = False
     servers: list[str] = []
     clouds: list[str] = []
 
@@ -63,12 +65,13 @@ async def chat_stream(body: ChatIn):
 @router.post("/approve")
 async def approve(body: ApproveIn):
     return _sse(astream_resume(body.thread_id, body.action, body.ids, body.remember,
-                               body.servers, body.clouds))
+                               body.auto_approve_all, body.servers, body.clouds))
 
 
 @router.post("/clarify")
 async def clarify(body: ClarifyIn):
-    return _sse(astream_clarify(body.thread_id, body.answer, body.servers, body.clouds))
+    return _sse(astream_clarify(body.thread_id, body.answer, body.auto_approve_all,
+                                body.servers, body.clouds))
 
 
 # ---------------- 历史记录 ----------------
