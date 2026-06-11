@@ -12,6 +12,7 @@
   {"type":"done","reply":...}                   本轮结束
   {"type":"error","error":...}
 """
+import json
 from collections.abc import AsyncIterator
 
 from langchain_core.messages import HumanMessage
@@ -141,6 +142,11 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
                         if msgs and getattr(msgs[-1], "tool_calls", None):
                             for tc in msgs[-1].tool_calls:
                                 level, _ = classify_tool_call(tc["name"], tc["args"])
+                                # 持久化"调用了什么"(命令/参数),让历史里能看到执行内容而不仅是结果
+                                _save_message(thread_id, "tool_call",
+                                              json.dumps({"name": tc["name"], "args": tc["args"],
+                                                          "level": level.value}, ensure_ascii=False),
+                                              tc["name"])
                                 yield {"type": "tool_call", "name": tc["name"],
                                        "args": tc["args"], "level": level.value}
                     elif node == "execute_tools":

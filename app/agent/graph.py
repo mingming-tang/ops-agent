@@ -47,9 +47,12 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
         if not messages or not isinstance(messages[0], SystemMessage):
             messages = [SystemMessage(content=system_text), *messages]
         response = await model_with_tools.ainvoke(messages)
+        usage = getattr(response, "usage_metadata", None) or {}
         return {"messages": [response],
                 "last_io": {"prompt": _render_prompt(messages),
-                            "response": _render_response(response)}}
+                            "response": _render_response(response),
+                            "usage": {"input": usage.get("input_tokens"),
+                                      "output": usage.get("output_tokens")}}}
 
     # -- 节点:护栏 + 逐条审批 --
     async def guardrail_node(state: AgentState) -> dict:

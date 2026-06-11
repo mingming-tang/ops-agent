@@ -97,6 +97,7 @@
   .dbg { margin: 6px 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 10px; background: var(--pre-bg); font-size: 12px; }
   .dbg summary { cursor: pointer; color: var(--muted); }
   .dbgmsg b { color: var(--primary); }
+  .dbgtok { color: var(--primary); font-size: 12px; margin: 4px 0; }
   /* 状态栏 */
   .statusBar { min-height: 22px; display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
   .statusBar.run { color: var(--primary); }
@@ -400,7 +401,14 @@ let activeView=null;   // 当前展示的会话视图(新会话拿到 tid 前其
 function makeView(tid){
   return { tid, msgs:document.createElement('div'), dbg:document.createElement('div'),
            approvalHtml:'', clarifyOpts:[], ctx:{bot:null},
-           status:{text:'',kind:''}, busy:false, abort:null, dbgCount:0, ended:false };
+           status:{text:'',kind:''}, busy:false, abort:null, dbgCount:0, ended:false,
+           tokIn:0, tokOut:0 };
+}
+// 工具调用块(命令 + shell 高亮),实时与历史共用,保证历史也能看到"执行了什么"
+function toolCallBlock(name, args, level){
+  const lv=level||''; const isCmd=!!(args&&args.command); const cmd=(args&&args.command)||name;
+  const intent=(args&&args.intent)||''; const cmdHtml=isCmd?shellHighlight(cmd):esc(cmd);
+  return el(`<div class="toolblk">▶ 调用 <b>${esc(name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span>${intent?'<br><small>📝 '+esc(intent)+'</small>':''}<br><code>${cmdHtml}</code></div>`);
 }
 function isActive(v){ return v===activeView; }
 function highlightHist(){ document.querySelectorAll('.histList-item').forEach(x=>x.classList.toggle('active', x.dataset.tid===threadId)); }
@@ -449,12 +457,10 @@ function handleEvent(ev, v){
       if(isActive(v)){ threadId=v.tid; localStorage.setItem('threadId',v.tid); $('threadLabel').textContent='thread: '+v.tid; }
       loadConversations(); }
   else if(ev.type==='token'){ if(!v.ctx.bot){ v.ctx.bot=vAddMsg(v,'bot',''); v.ctx.bot.classList.add('cursor'); } v.ctx.bot.textContent+=ev.text; vStatus(v,'模型回复中…','run'); vScroll(v); }
-  else if(ev.type==='tool_call'){ const lv=ev.level||''; const isCmd=!!(ev.args&&ev.args.command); const cmd=(ev.args&&ev.args.command)||ev.name; const intent=(ev.args&&ev.args.intent)||''; vStatus(v,'指令执行中…','run');
-      const cmdHtml=isCmd?shellHighlight(cmd):esc(cmd);
-      vAppend(v, el(`<div class="toolblk">▶ 调用 <b>${esc(ev.name)}</b> <span class="pill ${lv}">${LV[lv]||lv}</span>${intent?'<br><small>📝 '+esc(intent)+'</small>':''}<br><code>${cmdHtml}</code></div>`)); }
+  else if(ev.type==='tool_call'){ vStatus(v,'指令执行中…','run'); vAppend(v, toolCallBlock(ev.name, ev.args, ev.level)); }
   else if(ev.type==='tool_result'){ const skip=(ev.output||'').startsWith('[已跳过]'); vStatus(v,'处理执行结果…','run');
       vAppend(v, el(toolResultHtml(ev.name, ev.output, skip))); }
-  else if(ev.type==='llm_io'){ if($('dbgToggle').checked) renderLlmIo(v, ev); }
+  else if(ev.type==='llm_io'){ const u=ev.usage||{}; v.tokIn+=(u.input||0); v.tokOut+=(u.output||0); if($('dbgToggle').checked) renderLlmIo(v, ev); }
   else if(ev.type==='approval_required'){ if(v.ctx.bot){ v.ctx.bot.classList.remove('cursor'); v.ctx.bot=null; } vStatus(v,'等待确认','wait'); renderApproval(v, ev); }
   else if(ev.type==='clarify_required'){ if(v.ctx.bot){ v.ctx.bot.classList.remove('cursor'); v.ctx.bot=null; } vStatus(v,'等待澄清','wait'); renderClarify(v, ev); }
   else if(ev.type==='done'){ if(v.ctx.bot){ v.ctx.bot.classList.remove('cursor'); v.ctx.bot=null; } vStatus(v,'已完成','done'); }
@@ -669,8 +675,11 @@ function renderLlmIo(v, ev){
   }).join('');
   const r=ev.response||{};
   const rtc = (r.tool_calls&&r.tool_calls.length) ? '<div><i>tool_calls:</i> '+esc(JSON.stringify(r.tool_calls))+'</div>' : '';
+  const u=ev.usage||{}; const ti=u.input||0, to=u.output||0;
+  const tok=`🎫 本次 输入 ${ti} / 输出 ${to} · 本会话累计 输入 ${v.tokIn} / 输出 ${v.tokOut}`;
   v.dbg.appendChild(el(
     `<details class="dbg"><summary>🐞 模型请求/返回 #${v.dbgCount}(prompt ${ (ev.prompt||[]).length } 条消息)</summary>
+       <div class="dbgtok">${tok}</div>
        <b>▷ 发送给模型的 Prompt</b>${p}
        <b>◁ 模型返回</b><div class="dbgmsg"><pre>${esc(r.content||'(空,仅工具调用)')}</pre>${rtc}</div>
      </details>`));
@@ -691,7 +700,8 @@ async function openConversation(tid){
   const c=await api('/chat/conversations/'+tid);
   const v=makeView(tid); threads[tid]=v;
   c.messages.forEach(m=>{
-    if(m.role==='tool'){ const skip=(m.content||'').startsWith('[已跳过]');
+    if(m.role==='tool_call'){ try{ const d=JSON.parse(m.content); v.msgs.appendChild(toolCallBlock(d.name, d.args, d.level)); }catch(e){} }
+    else if(m.role==='tool'){ const skip=(m.content||'').startsWith('[已跳过]');
       v.msgs.appendChild(el(toolResultHtml(m.tool_name||'结果', m.content, skip))); }
     else vAddMsg(v, m.role==='user'?'user':'bot', m.content);
   });

@@ -29,6 +29,7 @@ def build_chat_model(cfg: ModelProvider) -> BaseChatModel:
             api_key=api_key,
             base_url=cfg.base_url or None,
             temperature=cfg.temperature,
+            stream_usage=True,          # 流式时也返回 token 用量
             **extra,
         )
 
@@ -41,5 +42,6 @@ def build_chat_model(cfg: ModelProvider) -> BaseChatModel:
         api_key=api_key,
         base_url=base_url,
         temperature=cfg.temperature,
+        stream_usage=True,              # 流式时也返回 token 用量(OpenAI 兼容端点)
         **extra,
     )
