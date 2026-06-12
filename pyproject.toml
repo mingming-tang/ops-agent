@@ -2,6 +2,7 @@
 name = "ops-agent"
 version = "0.1.0"
 description = "运维 Agent —— LangGraph 编排,多模型 + 多云 MCP + SSH,带审批门与审计"
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     # --- Agent 编排 ---
