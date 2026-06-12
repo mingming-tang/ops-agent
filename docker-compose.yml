@@ -1,7 +1,8 @@
 services:
   ops-agent:
-    build: .
-    image: ops-agent:latest
+    image: mingmingtang/ops-agent:latest
+    # 想用本地源码自己构建?取消下面一行注释(会覆盖上面的 image 作为构建标签):
+    # build: .
     ports:
       - "8000:8000"
     environment:
