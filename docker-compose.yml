@@ -1,7 +1,7 @@
 services:
-  operator-agent:
+  ops-agent:
     build: .
-    image: operator-agent:latest
+    image: ops-agent:latest
     ports:
       - "8000:8000"
     environment:
@@ -12,8 +12,8 @@ services:
       AUTH_USERNAME: ${AUTH_USERNAME:-admin}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-}
       # 默认用挂载卷里的 SQLite;如需 Postgres 取消下面两行注释并修改
-      # DATABASE_URL: postgresql+psycopg://user:pass@db:5432/operator_agent
-      # CHECKPOINT_DB_URL: postgresql://user:pass@db:5432/operator_agent
+      # DATABASE_URL: postgresql+psycopg://user:pass@db:5432/ops_agent
+      # CHECKPOINT_DB_URL: postgresql://user:pass@db:5432/ops_agent
     volumes:
       - oa-data:/app/data
     restart: unless-stopped

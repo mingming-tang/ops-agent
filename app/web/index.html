@@ -171,7 +171,7 @@
   <button data-tab="models">模型</button>
   <button data-tab="servers">服务器</button>
   <button data-tab="sshkeys">SSH秘钥</button>
-  <button data-tab="clouds">云账号(MCP)</button>
+  <button data-tab="clouds" style="display:none">云账号(MCP)</button>
   <button data-tab="audits">审计</button>
 </nav>
 <main>
@@ -195,7 +195,7 @@
             <span class="tlabel">操作对象<small>(不选=全部)</small>:</span>
             <span class="tgroup">🖥️ 服务器 <span id="serverChecks"></span></span>
           </div>
-          <div class="targetRow">
+          <div class="targetRow" style="display:none">
             <span class="tgroup">☁️ 云账号 <span id="cloudChecks"></span></span>
           </div>
           <div class="targetRow">
@@ -874,7 +874,7 @@ async function testCloud(id){
       ? '✅ 可用,拉到 '+r.tool_count+' 个工具<pre>'+esc((r.tools||[]).join('\n'))+'</pre>'
       : '❌ 不可用<pre>'+esc(r.error)+'</pre>'
         +(r.traceback?'<details><summary>展开完整堆栈</summary><pre>'+esc(r.traceback)+'</pre></details>':'')
-        +'<small>更多细节(含 MCP 子进程 stderr)见服务端日志 /tmp/operator_agent.log</small>'; }
+        +'<small>更多细节(含 MCP 子进程 stderr)见服务端日志 /tmp/ops_agent.log</small>'; }
   catch(e){ slot.innerHTML=' <small>❌ 请求失败</small>'; }
 }
 async function loadClouds(){ const l=await api('/admin/cloud-accounts'); $('cloudList').innerHTML=l.map(a=>

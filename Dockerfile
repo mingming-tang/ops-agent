@@ -34,7 +34,7 @@ ENV VIRTUAL_ENV=/opt/venv \
     APP_HOST=0.0.0.0 \
     APP_PORT=8000 \
     # SQLite 落到挂载卷里,容器重建不丢数据(可用 DATABASE_URL 覆盖为 Postgres)
-    DATABASE_URL=sqlite:////app/data/operator_agent.db
+    DATABASE_URL=sqlite:////app/data/ops_agent.db
 
 # 复制已装好的依赖与应用源码(web 静态资源随源码一起,index.html 按相对路径加载)
 COPY --from=builder /opt/venv /opt/venv

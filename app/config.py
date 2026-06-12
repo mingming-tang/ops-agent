@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
-    database_url: str = "sqlite:///./operator_agent.db"
+    database_url: str = "sqlite:///./ops_agent.db"
     checkpoint_db_url: str = ""
 
     secret_encryption_key: str = "CHANGE_ME_GENERATE_A_FERNET_KEY"

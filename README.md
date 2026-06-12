@@ -1,4 +1,4 @@
-# 运维 Agent (Operator Agent)
+# 运维 Agent (Ops Agent)
 
 基于 **LangGraph 1.2.2** 的运维智能体:能通过 SSH 操作服务器、通过云厂商 MCP(阿里云 / Cloudflare,可多账号)操作云资源,完成复杂运维任务。带**命令分级护栏 + 人工审批门 + 全量审计 + 后台配置**。
 
@@ -18,7 +18,7 @@
 ## 快速开始
 
 ```bash
-cd operator_agent
+cd ops-agent
 uv venv && source .venv/bin/activate
 uv pip install -e .
 
