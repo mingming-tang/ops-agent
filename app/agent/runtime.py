@@ -21,12 +21,14 @@ from langgraph.types import Command
 
 from app.agent.graph import build_agent
 from app.agent.guardrails import classify_tool_call
+from app.agent.memory import extract_and_store
 from app.config import get_settings
 from app.db.base import SessionLocal
 from app.db.models import CloudAccount, Conversation, Message, ModelProvider
 from app.llm.registry import build_chat_model
 from app.tools.clarify import clarify_tool
 from app.tools.mcp_manager import load_cloud_tools
+from app.tools.memory import memory_tools
 from app.tools.ssh import make_scoped_ssh_tools
 
 settings = get_settings()
@@ -54,6 +56,8 @@ async def _assemble(servers: list[str] | None = None, clouds: list[str] | None =
 
     allowed = set(servers) if servers else None
     tools = [*make_scoped_ssh_tools(allowed), clarify_tool]
+    if settings.memory_enabled:
+        tools += memory_tools()
 
     with SessionLocal() as db:
         q = db.query(CloudAccount).filter(CloudAccount.enabled)
@@ -171,6 +175,27 @@ async def _run_stream(agent, graph_input, config, thread_id: str) -> AsyncIterat
             _save_message(thread_id, "assistant", "".join(assistant_buf) + "\n…(已中断)")
         if not finished:
             _set_status(thread_id, "interrupted")
+
+
+async def extract_memories_on_end(thread_id: str) -> None:
+    """会话结束时,从该 thread 的对话里自动抽取长期记忆。best-effort,失败静默。
+
+    直接从 checkpointer 读取对话状态,避免重新装配工具(无需连云/SSH)。
+    """
+    if not settings.memory_auto_extract:
+        return
+    try:
+        config = {"configurable": {"thread_id": thread_id}}
+        tup = await _checkpointer.aget_tuple(config)
+        if tup is None:
+            return
+        messages = (tup.checkpoint.get("channel_values") or {}).get("messages") or []
+        if not messages:
+            return
+        model = build_chat_model(_get_default_model())
+        await extract_and_store(messages, model, thread_id)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def astream_turn(thread_id: str, user_message: str,

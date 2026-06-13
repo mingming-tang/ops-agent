@@ -172,6 +172,7 @@
   <button data-tab="servers">服务器</button>
   <button data-tab="sshkeys">SSH秘钥</button>
   <button data-tab="clouds" style="display:none">云账号(MCP)</button>
+  <button data-tab="memory">记忆</button>
   <button data-tab="audits">审计</button>
 </nav>
 <main>
@@ -305,6 +306,27 @@
   </section>
 
   <!-- 审计 -->
+  <!-- 长期记忆 -->
+  <section class="panel" id="memory">
+    <div class="card">
+      <h3>新增记忆</h3>
+      <div class="row">
+        <input id="mem_content" placeholder="一句话事实 如 web-prod-1 的 nginx 配置在 /etc/nginx/conf.d/"/>
+        <select id="mem_kind">
+          <option value="fact">fact 事实</option>
+          <option value="preference">preference 偏好</option>
+          <option value="runbook">runbook 操作约定</option>
+          <option value="env">env 环境</option>
+        </select>
+      </div>
+      <button class="btn" onclick="addMemory()">保存</button>
+      <small> · Agent 也会在会话中自动存取并在结束时抽取</small>
+    </div>
+    <div class="card"><button class="btn ghost" onclick="loadMemory()">刷新</button></div>
+    <div id="memoryList"></div>
+  </section>
+
+  <!-- 审计 -->
   <section class="panel" id="audits">
     <div class="card"><button class="btn ghost" onclick="loadAudits()">刷新</button><div id="auditList"></div></div>
   </section>
@@ -361,6 +383,7 @@ document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
   if(b.dataset.tab==='servers'){ loadServers(); loadKeyOptions(); }
   if(b.dataset.tab==='sshkeys') loadSSHKeys();
   if(b.dataset.tab==='clouds') loadClouds();
+  if(b.dataset.tab==='memory') loadMemory();
   if(b.dataset.tab==='audits') loadAudits();
 });
 
@@ -887,6 +910,19 @@ async function loadClouds(){ const l=await api('/admin/cloud-accounts'); $('clou
    <div id="ctest_${a.id}"></div></div>`).join(''); }
 
 // ---- 审计 ----
+// ---- 长期记忆 ----
+async function addMemory(){
+  const content=$('mem_content').value.trim();
+  if(!content){ alert('请填写记忆内容'); return; }
+  await api('/memory','POST',{content, kind:$('mem_kind').value});
+  $('mem_content').value=''; loadMemory();
+}
+async function loadMemory(){ const l=await api('/memory'); $('memoryList').innerHTML = l.length ? l.map(m=>
+  `<div class="card"><span style="display:inline-block;padding:1px 7px;border-radius:10px;background:var(--card-border);font-size:12px">${esc(m.kind)}</span> ${esc(m.content)}
+   <small style="display:block;color:var(--muted)">${new Date(m.created_at).toLocaleString()}</small>
+   <button class="btn danger" style="float:right" onclick="api('/memory/${m.id}','DELETE').then(loadMemory)">删除</button></div>`).join('')
+  : '<div class="card"><small>暂无长期记忆。Agent 会在对话中自动积累,你也可以手动添加。</small></div>'; }
+
 async function loadAudits(){ const l=await api('/admin/audits'); $('auditList').innerHTML=
   '<table><tr><th>时间</th><th>工具</th><th>目标</th><th>命令</th><th>级别</th><th>结果</th></tr>'+
   l.map(r=>`<tr><td>${r.created_at.slice(5,19)}</td><td>${r.tool}</td><td>${r.target||''}</td>

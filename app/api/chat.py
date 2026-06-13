@@ -3,14 +3,22 @@ import json
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.agent.runtime import astream_clarify, astream_resume, astream_turn
+from app.agent.runtime import (
+    astream_clarify,
+    astream_resume,
+    astream_turn,
+    extract_memories_on_end,
+)
+from app.config import get_settings
 from app.db.base import get_db
 from app.db.models import Conversation, Message
+
+settings = get_settings()
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -94,12 +102,15 @@ def get_conversation(thread_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/conversations/{thread_id}/end")
-def end_conversation(thread_id: str, db: Session = Depends(get_db)):
-    """结束任务:把会话标记为已结束(不再续聊)。"""
+def end_conversation(thread_id: str, background_tasks: BackgroundTasks,
+                     db: Session = Depends(get_db)):
+    """结束任务:把会话标记为已结束(不再续聊),并后台抽取长期记忆。"""
     c = db.query(Conversation).filter_by(thread_id=thread_id).first()
     if c is not None:
         c.status = "ended"
         db.commit()
+    if settings.memory_auto_extract:
+        background_tasks.add_task(extract_memories_on_end, thread_id)
     return {"ok": True}
 
 

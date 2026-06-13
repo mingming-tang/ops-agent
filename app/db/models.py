@@ -138,6 +138,23 @@ class Message(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class Memory(Base):
+    """长期记忆:跨会话持久化的运维知识/事实。
+
+    由 Agent 主动写入(save_memory 工具)或会话结束时自动抽取生成。
+    embedding 为可选的语义向量(无 embedding 供应商时为 None,召回降级为关键词匹配)。
+    """
+    __tablename__ = "memories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    content: Mapped[str] = mapped_column(Text)                  # 记忆正文(一句话事实)
+    kind: Mapped[str] = mapped_column(String(32), default="fact")  # fact | preference | runbook | env
+    source_thread_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)  # list[float] 语义向量
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class AutoApproveRule(Base):
     """用户在审批时勾选"下次不再确认"后记住的命令(精确文本匹配),自动放行。"""
     __tablename__ = "auto_approve_rules"

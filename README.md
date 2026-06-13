@@ -36,6 +36,8 @@ Agent: 执行 → 汇总结论
 - **🛡️ 命令分级护栏** —— 命令自动分级为 *只读 / 变更 / 危险*,只读可放行,变更与危险默认逐条人工审批。
 - **🙋 人工审批门 (Human-in-the-loop)** —— 基于 LangGraph `interrupt()`,审批前任务挂起、审批后续跑,可按会话开启「本会话免确认」。
 - **🖥️ 内置 SSH 终端** —— Web 控制台自带多 Tab 交互式终端,Agent 操作之余也能自己上手敲。
+- **🧠 长期记忆** —— 跨会话持久化运维知识:Agent 主动 `save_memory`/`recall_memory`,会话结束自动抽取事实,向量语义召回(无 embedding 时降级关键词),控制台「记忆」标签可查看/增删。
+- **🗜️ 消息压缩** —— 单会话过长时自动把较早消息摘要化、只保留最近若干条,控制上下文体积与 token 开销。
 - **🧩 多模型供应商** —— 内置 OpenAI / Anthropic / 通义千问(Qwen) / MiniMax / DeepSeek,后台即可切换默认模型。
 - **🔐 凭证加密落库** —— SSH 私钥/密码等敏感凭证用 Fernet 加密存储。
 - **📋 全量审计** —— 每次命令执行、每次审批都落库可追溯。
@@ -145,6 +147,13 @@ docker compose up -d
 | `REQUIRE_APPROVAL_FOR_DANGEROUS` | `true` | 危险命令是否强制人工审批。 |
 | `REQUIRE_COMMAND_APPROVAL` | `true` | 所有可执行命令(SSH/云)执行前是否逐条审批。 |
 | `DEFAULT_DRY_RUN` | `false` | 是否默认只展示不执行。 |
+| `MEMORY_ENABLED` | `true` | 长期记忆:启用 `save_memory`/`recall_memory` 工具与跨会话召回注入。 |
+| `MEMORY_AUTO_EXTRACT` | `true` | 会话结束/压缩时自动用 LLM 抽取关键事实入库。 |
+| `MEMORY_TOP_K` | `5` | 每轮注入提示词的相关记忆条数。 |
+| `EMBEDDING_MODEL` | 空 | 覆盖默认 embedding 模型名;留空按供应商默认(Anthropic 无 embedding 时自动降级为关键词召回)。 |
+| `COMPRESS_ENABLED` | `true` | 消息压缩:单会话过长时把旧消息摘要化以控制上下文。 |
+| `COMPRESS_TOKEN_THRESHOLD` | `12000` | 估算 token 超过此值触发压缩。 |
+| `COMPRESS_KEEP_RECENT` | `8` | 压缩时保留最近多少条原始消息。 |
 | `APP_HOST` / `APP_PORT` | `0.0.0.0` / `8000` | 监听地址/端口。 |
 
 ---
@@ -234,4 +243,4 @@ python -m app.main          # 默认 http://localhost:8000(开发模式带热重
 
 ## 📄 License
 
-本项目基于 [MIT License](LICENSE) 开源。欢迎 Issue / PR。
+MIT(如仓库尚无 `LICENSE` 文件,请按需补充)。欢迎 Issue / PR。

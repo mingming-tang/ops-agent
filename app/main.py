@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, auth, chat, terminal
+from app.api import admin, auth, chat, memory, terminal
 from app.config import get_settings
 from app.db.base import init_db
 from app.db.crypto import verify_token
@@ -42,6 +42,7 @@ def health() -> dict:
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(chat.router)
+app.include_router(memory.router)
 app.include_router(terminal.router)
 
 # 后台静态页(简单的配置 + 对话 UI)

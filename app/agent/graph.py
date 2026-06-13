@@ -12,7 +12,13 @@
   - 审计:execute_tools 对每次调用写 AuditLog。
 """
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.tools import BaseTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -25,7 +31,13 @@ from app.agent.guardrails import (
     needs_approval,
     remember_auto_approve,
 )
-from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.memory import (
+    extract_and_store,
+    format_memories,
+    search_memories,
+    _render_for_extract,
+)
+from app.agent.prompts import SUMMARY_PROMPT, SYSTEM_PROMPT
 from app.agent.state import AgentState
 from app.config import get_settings
 from app.db.base import SessionLocal
@@ -41,18 +53,47 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
     model_with_tools = model.bind_tools(tools)
     system_text = SYSTEM_PROMPT + (("\n\n" + system_suffix) if system_suffix else "")
 
-    # -- 节点:推理 --
+    # -- 节点:推理(含消息压缩 + 长期记忆注入)--
     async def agent_node(state: AgentState) -> dict:
-        messages = state["messages"]
-        if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=system_text), *messages]
-        response = await model_with_tools.ainvoke(messages)
+        # state["messages"] 不含 SystemMessage(每轮在此临时拼接,不持久化)
+        messages = [m for m in state["messages"] if not isinstance(m, SystemMessage)]
+        notes = state.get("notes") or ""
+        remove_msgs: list = []
+
+        # 1) 压缩:估算 token 超阈值时,把较早消息摘要进 notes,并从本次调用中剔除
+        if settings.compress_enabled and _estimate_tokens(messages) > settings.compress_token_threshold:
+            new_notes, remove_msgs, dropped = await _compact(messages, notes, model)
+            if remove_msgs:
+                notes = new_notes
+                if settings.memory_auto_extract:
+                    await extract_and_store(dropped, model)   # 摘要丢弃前抢救事实入库
+                drop_ids = {id(m) for m in dropped}
+                messages = [m for m in messages if id(m) not in drop_ids]
+
+        # 2) 召回:按最近一条用户消息检索相关长期记忆
+        memory_block = ""
+        if settings.memory_enabled:
+            query = _last_human_text(messages)
+            if query:
+                memory_block = format_memories(search_memories(query, settings.memory_top_k))
+
+        # 3) 组装本次调用消息:system + (摘要/记忆 context) + 压缩后的对话(均不写回 state)
+        call_messages: list = [SystemMessage(content=system_text)]
+        ctx = _build_context(notes, memory_block)
+        if ctx:
+            call_messages.append(SystemMessage(content=ctx))
+        call_messages += messages
+
+        response = await model_with_tools.ainvoke(call_messages)
         usage = getattr(response, "usage_metadata", None) or {}
-        return {"messages": [response],
-                "last_io": {"prompt": _render_prompt(messages),
-                            "response": _render_response(response),
-                            "usage": {"input": usage.get("input_tokens"),
-                                      "output": usage.get("output_tokens")}}}
+        update = {"messages": [*remove_msgs, response],
+                  "last_io": {"prompt": _render_prompt(call_messages),
+                              "response": _render_response(response),
+                              "usage": {"input": usage.get("input_tokens"),
+                                        "output": usage.get("output_tokens")}}}
+        if remove_msgs:
+            update["notes"] = notes
+        return update
 
     # -- 节点:护栏 + 逐条审批 --
     async def guardrail_node(state: AgentState) -> dict:
@@ -170,6 +211,68 @@ def build_agent(model: BaseChatModel, tools: list[BaseTool], checkpointer=None,
     graph.add_edge("clarify", "agent")
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())
+
+
+# ----------------------------------------------------------------------------
+# 消息压缩 / 记忆注入辅助
+# ----------------------------------------------------------------------------
+def _estimate_tokens(messages: list) -> int:
+    """廉价 token 估算:总字符数 / 3(中英混合够用,无需 tiktoken)。"""
+    total = 0
+    for m in messages:
+        c = m.content if isinstance(m.content, str) else str(m.content)
+        total += len(c)
+        for tc in (getattr(m, "tool_calls", None) or []):
+            total += len(str(tc.get("args", "")))
+    return total // 3
+
+
+def _last_human_text(messages: list) -> str:
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            return m.content if isinstance(m.content, str) else str(m.content)
+    return ""
+
+
+def _build_context(notes: str, memory_block: str) -> str:
+    parts = []
+    if notes:
+        parts.append("## 对话历史摘要(较早内容已压缩,以下为要点)\n" + notes)
+    if memory_block:
+        parts.append("## 相关长期记忆(跨会话)\n" + memory_block)
+    return "\n\n".join(parts)
+
+
+async def _compact(messages: list, existing_notes: str, model: BaseChatModel):
+    """把较早的消息摘要进 notes。返回 (新摘要, [RemoveMessage...], [被删消息...])。
+
+    切点保证工具调用配对安全:保留窗口不以 ToolMessage 开头,
+    被删段内部的 AIMessage(tool_calls) 与其 ToolMessage 成对一起删除。
+    """
+    keep = settings.compress_keep_recent
+    if len(messages) <= keep:
+        return existing_notes, [], []
+    cut = len(messages) - keep
+    # 向后挪到干净边界:保留窗口首条不能是 ToolMessage(否则其 tool_call 成孤儿)
+    while cut < len(messages) and isinstance(messages[cut], ToolMessage):
+        cut += 1
+    if cut <= 0 or cut >= len(messages):
+        return existing_notes, [], []      # 没有可安全压缩的边界
+
+    dropped = messages[:cut]
+    transcript = _render_for_extract(dropped)
+    prompt = SUMMARY_PROMPT.format(existing=existing_notes or "(无)", transcript=transcript[:12000])
+    try:
+        resp = await model.ainvoke([SystemMessage(content=prompt)])
+        summary = resp.content if isinstance(resp.content, str) else str(resp.content)
+    except Exception:  # noqa: BLE001  摘要失败:保持原状,不丢消息
+        return existing_notes, [], []
+    if not summary.strip():
+        return existing_notes, [], []
+    remove_msgs = [RemoveMessage(id=m.id) for m in dropped if getattr(m, "id", None)]
+    if not remove_msgs:                    # 消息无 id 无法删除,放弃压缩
+        return existing_notes, [], []
+    return summary, remove_msgs, dropped
 
 
 def _render_prompt(messages: list) -> list[dict]:
