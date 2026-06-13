@@ -187,6 +187,7 @@ python -m app.main          # 默认 http://localhost:8000(开发模式带热重
 | Plan-and-Execute + 系统提示 | `app/agent/state.py` · `app/agent/prompts.py` |
 | 续跑 / Checkpointer | `app/agent/runtime.py` |
 | 多模型供应商层 | `app/llm/registry.py` |
+| Token 用量统计(按小时/天/月) | `app/llm/usage.py`(模型回调采集)· `GET /admin/token-usage` |
 | SSH 工具 / 交互式终端 | `app/tools/ssh.py` · `app/api/terminal.py` |
 | 云资源 MCP 接入 | `app/tools/mcp_manager.py` |
 | 凭证加密(Fernet) | `app/db/crypto.py` |

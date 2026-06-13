@@ -20,6 +20,10 @@ DEFAULT_BASE_URLS: dict[str, str] = {
 def build_chat_model(cfg: ModelProvider) -> BaseChatModel:
     api_key = decrypt(cfg.api_key_enc)
     extra = cfg.extra or {}
+    # 挂 token 用量回调:该模型的每次调用都会按 (model_name, provider) 落库统计
+    from app.llm.usage import TokenUsageCallback
+
+    callbacks = [TokenUsageCallback(cfg.model_name, cfg.name)]
 
     if cfg.provider_type == ProviderType.anthropic:
         from langchain_anthropic import ChatAnthropic
@@ -30,6 +34,7 @@ def build_chat_model(cfg: ModelProvider) -> BaseChatModel:
             base_url=cfg.base_url or None,
             temperature=cfg.temperature,
             stream_usage=True,          # 流式时也返回 token 用量
+            callbacks=callbacks,
             **extra,
         )
 
@@ -43,5 +48,6 @@ def build_chat_model(cfg: ModelProvider) -> BaseChatModel:
         base_url=base_url,
         temperature=cfg.temperature,
         stream_usage=True,              # 流式时也返回 token 用量(OpenAI 兼容端点)
+        callbacks=callbacks,
         **extra,
     )

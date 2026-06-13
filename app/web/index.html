@@ -44,6 +44,7 @@
   textarea, input, select { width: 100%; background: var(--input-bg); border: 1px solid var(--border); color: var(--fg); padding: 8px; border-radius: 6px; margin: 4px 0; font-family: inherit; }
   .btn { background: var(--primary); color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
   .btn.danger { background: var(--danger); } .btn.ghost { background: var(--ghost); color: var(--ghost-fg); }
+  .btn.ghost.active { background: var(--primary); color: #fff; }
   .card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   pre { white-space: pre-wrap; background: var(--pre-bg); padding: 10px; border-radius: 8px; border: 1px solid var(--pre-border); }
@@ -243,6 +244,15 @@
       <button class="btn" onclick="addModel()">保存</button>
     </div>
     <div id="modelList"></div>
+    <div class="card">
+      <h3 style="display:inline-block">📊 Token 消耗</h3>
+      <span style="float:right">
+        <button class="btn ghost" id="tk_hour" onclick="setTokenPeriod('hour')">按小时</button>
+        <button class="btn ghost" id="tk_day" onclick="setTokenPeriod('day')">按天</button>
+        <button class="btn ghost" id="tk_month" onclick="setTokenPeriod('month')">按月</button>
+      </span>
+      <div id="tokenStats"></div>
+    </div>
   </section>
 
   <!-- 服务器 -->
@@ -763,7 +773,28 @@ async function addModel(){
 }
 async function loadModels(){ const l=await api('/admin/models'); $('modelList').innerHTML=l.map(m=>
   `<div class="card">${m.is_default?'⭐ ':''}<b>${m.name}</b> · ${m.provider_type} · ${m.model_name} <small>${m.base_url||''}</small>
-   <button class="btn danger" style="float:right" onclick="api('/admin/models/${m.id}','DELETE').then(loadModels)">删除</button></div>`).join(''); }
+   <button class="btn danger" style="float:right" onclick="api('/admin/models/${m.id}','DELETE').then(loadModels)">删除</button></div>`).join('');
+  loadTokenStats(); }
+
+// ---- Token 消耗统计 ----
+let tokenPeriod = 'day';
+const _num = n => (n||0).toLocaleString();
+function setTokenPeriod(p){ tokenPeriod=p; loadTokenStats(); }
+async function loadTokenStats(){
+  ['hour','day','month'].forEach(p=>$('tk_'+p).classList.toggle('active', p===tokenPeriod));
+  const d = await api('/admin/token-usage?period='+tokenPeriod);
+  const label = {hour:'小时',day:'天',month:'月'}[d.period]||'天';
+  const tin = d.buckets.reduce((s,b)=>s+b.input,0), tout = d.buckets.reduce((s,b)=>s+b.output,0);
+  let html = `<div style="margin:8px 0"><small>近一段时间合计 · 输入 <b>${_num(tin)}</b> · 输出 <b>${_num(tout)}</b> · 总计 <b>${_num(tin+tout)}</b> tokens</small></div>`;
+  html += `<table><tr><th>时间(每${label})</th><th>输入</th><th>输出</th><th>总计</th></tr>` +
+    (d.buckets.length ? d.buckets.map(b=>`<tr><td>${esc(b.bucket)}</td><td>${_num(b.input)}</td><td>${_num(b.output)}</td><td>${_num(b.total)}</td></tr>`).join('')
+      : '<tr><td colspan="4"><small>暂无数据</small></td></tr>') + '</table>';
+  if(d.by_model.length){
+    html += `<div style="margin-top:10px"><small>按模型</small></div><table><tr><th>模型</th><th>输入</th><th>输出</th><th>总计</th></tr>` +
+      d.by_model.map(m=>`<tr><td>${esc(m.model_name)}</td><td>${_num(m.input)}</td><td>${_num(m.output)}</td><td>${_num(m.total)}</td></tr>`).join('') + '</table>';
+  }
+  $('tokenStats').innerHTML = html;
+}
 
 // ---- 服务器 ----
 let editingServerId = null;

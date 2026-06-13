@@ -257,3 +257,12 @@ def list_audits(limit: int = 100, db: Session = _D(get_db)):
     return [{"id": r.id, "tool": r.tool_name, "target": r.target, "command": r.command,
              "level": r.level, "success": r.success, "approved": r.approved,
              "created_at": r.created_at.isoformat()} for r in rows]
+
+
+# ---------- token 用量统计 ----------
+@router.get("/token-usage")
+def token_usage(period: str = "day"):
+    """按时段统计 token 消耗(输入/输出分开)。period: hour | day | month。"""
+    from app.llm.usage import query_stats
+
+    return query_stats(period if period in ("hour", "day", "month") else "day")

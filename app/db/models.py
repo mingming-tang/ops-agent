@@ -164,6 +164,22 @@ class AutoApproveRule(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class TokenUsage(Base):
+    """每次大模型调用的 token 用量(输入/输出分开),用于按小时/天/月统计消耗。
+
+    在 llm/registry.py 给模型挂回调,所有调用(主推理、命令分级、摘要、记忆抽取)
+    都会落一条记录。
+    """
+    __tablename__ = "token_usage"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_name: Mapped[str] = mapped_column(String(120), index=True)   # 如 claude-opus-4-8
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 供应商配置名
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
 class AuditLog(Base):
     """每一次工具执行(SSH/云操作)都留痕,可回放、可追责。"""
     __tablename__ = "audit_logs"
